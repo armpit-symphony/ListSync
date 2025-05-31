@@ -755,6 +755,11 @@ async def handle_checkout_completed(session):
     if not store_id or not plan_type:
         return
     
+    # Get store info for email
+    store = store_users_collection.find_one({"id": store_id})
+    if not store:
+        return
+    
     # Create subscription record
     subscription_doc_id = str(uuid.uuid4())
     start_date = datetime.utcnow()
@@ -762,9 +767,11 @@ async def handle_checkout_completed(session):
     if plan_type == "monthly":
         end_date = start_date + timedelta(days=30)
         monthly_price = 12.00
+        price_display = 12.00
     else:  # yearly
         end_date = start_date + timedelta(days=365)
         monthly_price = 6.25  # 74.99 / 12 months
+        price_display = 74.99
     
     subscription = {
         "id": subscription_doc_id,
@@ -792,6 +799,15 @@ async def handle_checkout_completed(session):
             }
         }
     )
+    
+    # Send subscription confirmation email
+    asyncio.create_task(send_subscription_confirmation(
+        store["store_name"], 
+        store["email"], 
+        plan_type, 
+        price_display, 
+        start_date
+    ))
 
 async def handle_payment_succeeded(invoice):
     subscription_id = invoice.subscription
