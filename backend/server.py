@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi import FastAPI, HTTPException, Depends, status, Request, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr
@@ -10,12 +10,18 @@ import os
 import uuid
 from typing import List, Optional
 from enum import Enum
+import stripe
+import paypalrestsdk
+from cryptography.fernet import Fernet
 
 # Environment variables
 MONGO_URL = os.environ.get('MONGO_URL', 'mongodb://localhost:27017/')
 SECRET_KEY = "your-secret-key-change-in-production"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30 * 24 * 60  # 30 days
+ADMIN_SECRET_KEY = "admin-secret-key-change-in-production"
+ENCRYPTION_KEY = Fernet.generate_key()  # In production, store securely
+cipher_suite = Fernet(ENCRYPTION_KEY)
 
 app = FastAPI()
 
@@ -38,6 +44,8 @@ store_users_collection = db.store_users
 store_subscriptions_collection = db.store_subscriptions
 store_products_collection = db.store_products
 store_locations_collection = db.store_locations
+admin_users_collection = db.admin_users
+payment_config_collection = db.payment_config
 
 # Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -55,10 +63,17 @@ class SubscriptionStatus(str, Enum):
     INACTIVE = "inactive"
     EXPIRED = "expired"
     TRIAL = "trial"
+    PAST_DUE = "past_due"
+    CANCELED = "canceled"
 
 class UserType(str, Enum):
     HOUSEHOLD = "household"
     STORE = "store"
+    ADMIN = "admin"
+
+class PaymentProvider(str, Enum):
+    STRIPE = "stripe"
+    PAYPAL = "paypal"
 
 # Pydantic models for household users (existing)
 class UserCreate(BaseModel):
@@ -81,7 +96,7 @@ class Token(BaseModel):
     token_type: str
     user_type: str
 
-# Pydantic models for store users (new)
+# Pydantic models for store users
 class StoreUserCreate(BaseModel):
     store_name: str
     email: EmailStr
@@ -110,18 +125,45 @@ class StoreUser(BaseModel):
     subscription_expires: Optional[datetime]
     created_at: datetime
 
+# Pydantic models for admin users
+class AdminUserCreate(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+
+class AdminUserLogin(BaseModel):
+    email: EmailStr
+    password: str
+
+class AdminUser(BaseModel):
+    id: str
+    name: str
+    email: str
+    created_at: datetime
+
+# Payment and subscription models
 class StoreSubscriptionCreate(BaseModel):
     plan: SubscriptionPlan
+    provider: PaymentProvider
 
 class StoreSubscription(BaseModel):
     id: str
     store_id: str
     plan: SubscriptionPlan
     status: SubscriptionStatus
+    provider: PaymentProvider
+    subscription_id: Optional[str]
     start_date: datetime
     end_date: datetime
     monthly_price: float
     created_at: datetime
+
+class PaymentConfigUpdate(BaseModel):
+    stripe_secret_key: Optional[str] = None
+    stripe_publishable_key: Optional[str] = None
+    stripe_endpoint_secret: Optional[str] = None
+    paypal_client_id: Optional[str] = None
+    paypal_client_secret: Optional[str] = None
 
 class StoreProductCreate(BaseModel):
     name: str
@@ -182,6 +224,12 @@ def verify_password(plain_password, hashed_password):
 def get_password_hash(password):
     return pwd_context.hash(password)
 
+def encrypt_data(data: str) -> str:
+    return cipher_suite.encrypt(data.encode()).decode()
+
+def decrypt_data(encrypted_data: str) -> str:
+    return cipher_suite.decrypt(encrypted_data.encode()).decode()
+
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
     if expires_delta:
@@ -209,8 +257,10 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     
     if user_type == "household":
         user = users_collection.find_one({"id": user_id})
-    else:  # store
+    elif user_type == "store":
         user = store_users_collection.find_one({"id": user_id})
+    else:  # admin
+        user = admin_users_collection.find_one({"id": user_id})
     
     if user is None:
         raise credentials_exception
@@ -226,6 +276,388 @@ async def get_current_store_user(credentials: HTTPAuthorizationCredentials = Dep
             detail="Store access required"
         )
     return user
+
+async def get_current_admin_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    user = await get_current_user(credentials)
+    if user.get("user_type") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required"
+        )
+    return user
+
+async def get_payment_config():
+    """Get decrypted payment configuration"""
+    config = payment_config_collection.find_one({})
+    if not config:
+        return {}
+    
+    decrypted_config = {}
+    for key, value in config.items():
+        if key.startswith(('stripe_', 'paypal_')) and value:
+            try:
+                decrypted_config[key] = decrypt_data(value)
+            except:
+                decrypted_config[key] = value
+        else:
+            decrypted_config[key] = value
+    
+    return decrypted_config
+
+# Initialize admin user if not exists
+def create_default_admin():
+    if not admin_users_collection.find_one({}):
+        admin_id = str(uuid.uuid4())
+        admin_user = {
+            "id": admin_id,
+            "name": "System Admin",
+            "email": "admin@shopsync.com",
+            "password_hash": get_password_hash("admin123"),  # Change this!
+            "created_at": datetime.utcnow()
+        }
+        admin_users_collection.insert_one(admin_user)
+        print("Default admin created: admin@shopsync.com / admin123")
+
+# Create default admin on startup
+create_default_admin()
+
+# Admin Auth endpoints
+@app.post("/api/admin/auth/register", response_model=Token)
+async def register_admin(admin_data: AdminUserCreate, current_admin = Depends(get_current_admin_user)):
+    # Only existing admins can create new admins
+    if admin_users_collection.find_one({"email": admin_data.email}):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered"
+        )
+    
+    admin_id = str(uuid.uuid4())
+    hashed_password = get_password_hash(admin_data.password)
+    
+    admin_user = {
+        "id": admin_id,
+        "name": admin_data.name,
+        "email": admin_data.email,
+        "password_hash": hashed_password,
+        "created_at": datetime.utcnow()
+    }
+    
+    admin_users_collection.insert_one(admin_user)
+    
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": admin_id, "user_type": "admin"}, expires_delta=access_token_expires
+    )
+    
+    return {"access_token": access_token, "token_type": "bearer", "user_type": "admin"}
+
+@app.post("/api/admin/auth/login", response_model=Token)
+async def login_admin(admin_credentials: AdminUserLogin):
+    admin_user = admin_users_collection.find_one({"email": admin_credentials.email})
+    
+    if not admin_user or not verify_password(admin_credentials.password, admin_user["password_hash"]):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": admin_user["id"], "user_type": "admin"}, expires_delta=access_token_expires
+    )
+    
+    return {"access_token": access_token, "token_type": "bearer", "user_type": "admin"}
+
+@app.get("/api/admin/auth/me", response_model=AdminUser)
+async def get_current_admin_info(current_admin = Depends(get_current_admin_user)):
+    return AdminUser(
+        id=current_admin["id"],
+        name=current_admin["name"],
+        email=current_admin["email"],
+        created_at=current_admin["created_at"]
+    )
+
+# Admin Payment Configuration endpoints
+@app.post("/api/admin/payment/config")
+async def update_payment_config(config: PaymentConfigUpdate, current_admin = Depends(get_current_admin_user)):
+    encrypted_config = {}
+    
+    # Encrypt sensitive data
+    if config.stripe_secret_key:
+        encrypted_config["stripe_secret_key"] = encrypt_data(config.stripe_secret_key)
+    if config.stripe_publishable_key:
+        encrypted_config["stripe_publishable_key"] = encrypt_data(config.stripe_publishable_key)
+    if config.stripe_endpoint_secret:
+        encrypted_config["stripe_endpoint_secret"] = encrypt_data(config.stripe_endpoint_secret)
+    if config.paypal_client_id:
+        encrypted_config["paypal_client_id"] = encrypt_data(config.paypal_client_id)
+    if config.paypal_client_secret:
+        encrypted_config["paypal_client_secret"] = encrypt_data(config.paypal_client_secret)
+    
+    encrypted_config["updated_at"] = datetime.utcnow()
+    encrypted_config["updated_by"] = current_admin["id"]
+    
+    payment_config_collection.replace_one({}, encrypted_config, upsert=True)
+    
+    # Initialize payment providers
+    payment_config = await get_payment_config()
+    if payment_config.get("stripe_secret_key"):
+        stripe.api_key = payment_config["stripe_secret_key"]
+    
+    if payment_config.get("paypal_client_id") and payment_config.get("paypal_client_secret"):
+        paypalrestsdk.configure({
+            "mode": "sandbox",  # Change to "live" for production
+            "client_id": payment_config["paypal_client_id"],
+            "client_secret": payment_config["paypal_client_secret"]
+        })
+    
+    return {"message": "Payment configuration updated successfully"}
+
+@app.get("/api/admin/payment/config")
+async def get_payment_config_status(current_admin = Depends(get_current_admin_user)):
+    config = payment_config_collection.find_one({})
+    if not config:
+        return {"configured": False}
+    
+    return {
+        "configured": True,
+        "stripe_configured": bool(config.get("stripe_secret_key")),
+        "paypal_configured": bool(config.get("paypal_client_id")),
+        "updated_at": config.get("updated_at")
+    }
+
+# Admin Dashboard endpoints
+@app.get("/api/admin/stats")
+async def get_admin_stats(current_admin = Depends(get_current_admin_user)):
+    total_stores = store_users_collection.count_documents({})
+    active_subscriptions = store_subscriptions_collection.count_documents({"status": "active"})
+    trial_stores = store_users_collection.count_documents({"subscription_status": "trial"})
+    total_households = users_collection.count_documents({})
+    total_products = store_products_collection.count_documents({"is_advertised": True})
+    
+    # Calculate monthly revenue
+    monthly_revenue = 0
+    yearly_revenue = 0
+    active_subs = list(store_subscriptions_collection.find({"status": "active"}))
+    for sub in active_subs:
+        if sub["plan"] == "monthly":
+            monthly_revenue += 12.00
+        else:  # yearly
+            yearly_revenue += 74.99
+    
+    return {
+        "total_stores": total_stores,
+        "active_subscriptions": active_subscriptions,
+        "trial_stores": trial_stores,
+        "total_households": total_households,
+        "total_products": total_products,
+        "monthly_revenue": monthly_revenue,
+        "yearly_revenue": yearly_revenue,
+        "total_monthly_recurring": monthly_revenue + (yearly_revenue / 12)
+    }
+
+@app.get("/api/admin/subscriptions")
+async def get_all_subscriptions(current_admin = Depends(get_current_admin_user)):
+    subscriptions = list(store_subscriptions_collection.find({}).sort("created_at", -1))
+    
+    # Enrich with store info
+    for sub in subscriptions:
+        store = store_users_collection.find_one({"id": sub["store_id"]})
+        if store:
+            sub["store_name"] = store["store_name"]
+            sub["store_email"] = store["email"]
+    
+    return {"subscriptions": subscriptions}
+
+# Stripe Payment endpoints
+@app.post("/api/stripe/create-checkout-session")
+async def create_stripe_checkout_session(plan_type: str, current_store = Depends(get_current_store_user)):
+    payment_config = await get_payment_config()
+    if not payment_config.get("stripe_secret_key"):
+        raise HTTPException(status_code=400, detail="Stripe not configured")
+    
+    stripe.api_key = payment_config["stripe_secret_key"]
+    
+    try:
+        # Plan pricing - UPDATED PRICES
+        plans = {
+            "monthly": {"amount": 1200, "interval": "month"},  # $12.00
+            "yearly": {"amount": 7499, "interval": "year"}     # $74.99
+        }
+        
+        if plan_type not in plans:
+            raise HTTPException(400, "Invalid plan type")
+        
+        # Create customer
+        customer = stripe.Customer.create(
+            email=current_store["email"],
+            metadata={
+                'store_id': current_store["id"],
+                'store_name': current_store["store_name"]
+            }
+        )
+        
+        # Create checkout session
+        session = stripe.checkout.Session.create(
+            customer=customer.id,
+            payment_method_types=['card'],
+            line_items=[{
+                'price_data': {
+                    'currency': 'usd',
+                    'unit_amount': plans[plan_type]["amount"],
+                    'recurring': {'interval': plans[plan_type]["interval"]},
+                    'product_data': {
+                        'name': f'ShopSync Store Subscription - {plan_type.title()}',
+                        'description': f'Monthly subscription for grocery store advertising'
+                    }
+                },
+                'quantity': 1
+            }],
+            mode='subscription',
+            success_url=f"{os.getenv('REACT_APP_BACKEND_URL', 'http://localhost:3000')}/store/subscription/success?session_id={{CHECKOUT_SESSION_ID}}",
+            cancel_url=f"{os.getenv('REACT_APP_BACKEND_URL', 'http://localhost:3000')}/store/subscription/cancel",
+            subscription_data={
+                'metadata': {
+                    'store_id': current_store["id"],
+                    'plan_type': plan_type
+                }
+            }
+        )
+        
+        return {"session_url": session.url, "session_id": session.id}
+    except Exception as e:
+        raise HTTPException(500, f"Stripe error: {str(e)}")
+
+@app.post("/api/stripe/webhook")
+async def stripe_webhook(request: Request, stripe_signature: str = Header(None)):
+    payment_config = await get_payment_config()
+    endpoint_secret = payment_config.get("stripe_endpoint_secret")
+    
+    if not endpoint_secret:
+        raise HTTPException(400, "Stripe webhook secret not configured")
+    
+    payload = await request.body()
+    
+    try:
+        event = stripe.Webhook.construct_event(
+            payload, stripe_signature, endpoint_secret
+        )
+    except ValueError:
+        raise HTTPException(400, "Invalid payload")
+    except stripe.error.SignatureVerificationError:
+        raise HTTPException(401, "Invalid signature")
+    
+    # Handle subscription events
+    if event.type == 'checkout.session.completed':
+        await handle_checkout_completed(event.data.object)
+    elif event.type == 'invoice.payment_succeeded':
+        await handle_payment_succeeded(event.data.object)
+    elif event.type == 'invoice.payment_failed':
+        await handle_payment_failed(event.data.object)
+    elif event.type == 'customer.subscription.deleted':
+        await handle_subscription_canceled(event.data.object)
+    
+    return {"status": "success"}
+
+async def handle_checkout_completed(session):
+    store_id = session.metadata.get('store_id')
+    plan_type = session.metadata.get('plan_type')
+    subscription_id = session.subscription
+    
+    if not store_id or not plan_type:
+        return
+    
+    # Create subscription record
+    subscription_doc_id = str(uuid.uuid4())
+    start_date = datetime.utcnow()
+    
+    if plan_type == "monthly":
+        end_date = start_date + timedelta(days=30)
+        monthly_price = 12.00
+    else:  # yearly
+        end_date = start_date + timedelta(days=365)
+        monthly_price = 6.25  # 74.99 / 12 months
+    
+    subscription = {
+        "id": subscription_doc_id,
+        "store_id": store_id,
+        "plan": plan_type,
+        "status": SubscriptionStatus.ACTIVE,
+        "provider": PaymentProvider.STRIPE,
+        "subscription_id": subscription_id,
+        "start_date": start_date,
+        "end_date": end_date,
+        "monthly_price": monthly_price,
+        "created_at": datetime.utcnow()
+    }
+    
+    store_subscriptions_collection.insert_one(subscription)
+    
+    # Update store subscription status
+    store_users_collection.update_one(
+        {"id": store_id},
+        {
+            "$set": {
+                "subscription_status": SubscriptionStatus.ACTIVE,
+                "subscription_plan": plan_type,
+                "subscription_expires": end_date
+            }
+        }
+    )
+
+async def handle_payment_succeeded(invoice):
+    subscription_id = invoice.subscription
+    
+    # Update subscription status
+    store_subscriptions_collection.update_one(
+        {"subscription_id": subscription_id},
+        {
+            "$set": {
+                "status": SubscriptionStatus.ACTIVE,
+                "last_payment_date": datetime.utcnow()
+            }
+        }
+    )
+
+async def handle_payment_failed(invoice):
+    subscription_id = invoice.subscription
+    
+    # Update subscription status
+    store_subscriptions_collection.update_one(
+        {"subscription_id": subscription_id},
+        {
+            "$set": {
+                "status": SubscriptionStatus.PAST_DUE
+            }
+        }
+    )
+
+async def handle_subscription_canceled(subscription):
+    subscription_id = subscription.id
+    
+    # Update subscription status
+    result = store_subscriptions_collection.update_one(
+        {"subscription_id": subscription_id},
+        {
+            "$set": {
+                "status": SubscriptionStatus.CANCELED
+            }
+        }
+    )
+    
+    if result.modified_count > 0:
+        # Update store status
+        sub = store_subscriptions_collection.find_one({"subscription_id": subscription_id})
+        if sub:
+            store_users_collection.update_one(
+                {"id": sub["store_id"]},
+                {
+                    "$set": {
+                        "subscription_status": SubscriptionStatus.INACTIVE
+                    }
+                }
+            )
 
 # Household Auth endpoints (existing, updated to include user_type in token)
 @app.post("/api/auth/register", response_model=Token)
@@ -289,7 +721,7 @@ async def get_current_user_info(current_user = Depends(get_current_user)):
         created_at=current_user["created_at"]
     )
 
-# Store Auth endpoints (new)
+# Store Auth endpoints (updated with new pricing)
 @app.post("/api/store/auth/register", response_model=Token)
 async def register_store(store_data: StoreUserCreate):
     # Check if store already exists
@@ -364,7 +796,7 @@ async def get_current_store_info(current_store = Depends(get_current_store_user)
         created_at=current_store["created_at"]
     )
 
-# Store Subscription endpoints
+# Store Subscription endpoints (updated pricing)
 @app.post("/api/store/subscription", response_model=StoreSubscription)
 async def create_subscription(subscription_data: StoreSubscriptionCreate, current_store = Depends(get_current_store_user)):
     # Check if store already has an active subscription
@@ -379,22 +811,25 @@ async def create_subscription(subscription_data: StoreSubscriptionCreate, curren
             detail="Store already has an active subscription"
         )
     
-    # Create new subscription
+    # For now, create a pending subscription that will be activated via payment
     subscription_id = str(uuid.uuid4())
     start_date = datetime.utcnow()
     
+    # UPDATED PRICING
     if subscription_data.plan == SubscriptionPlan.MONTHLY:
         end_date = start_date + timedelta(days=30)
-        monthly_price = 99.99
+        monthly_price = 12.00
     else:  # yearly
         end_date = start_date + timedelta(days=365)
-        monthly_price = 79.99  # Discount for yearly
+        monthly_price = 6.25  # 74.99 / 12 months
     
     subscription = {
         "id": subscription_id,
         "store_id": current_store["id"],
         "plan": subscription_data.plan,
-        "status": SubscriptionStatus.ACTIVE,
+        "status": SubscriptionStatus.INACTIVE,  # Will be activated via payment
+        "provider": subscription_data.provider,
+        "subscription_id": None,  # Set when payment is processed
         "start_date": start_date,
         "end_date": end_date,
         "monthly_price": monthly_price,
@@ -403,25 +838,13 @@ async def create_subscription(subscription_data: StoreSubscriptionCreate, curren
     
     store_subscriptions_collection.insert_one(subscription)
     
-    # Update store user subscription status
-    store_users_collection.update_one(
-        {"id": current_store["id"]},
-        {
-            "$set": {
-                "subscription_status": SubscriptionStatus.ACTIVE,
-                "subscription_plan": subscription_data.plan,
-                "subscription_expires": end_date
-            }
-        }
-    )
-    
     return StoreSubscription(**subscription)
 
 @app.get("/api/store/subscription", response_model=Optional[StoreSubscription])
 async def get_current_subscription(current_store = Depends(get_current_store_user)):
     subscription = store_subscriptions_collection.find_one({
         "store_id": current_store["id"],
-        "status": SubscriptionStatus.ACTIVE
+        "status": {"$in": [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIAL]}
     })
     
     if not subscription:
@@ -429,7 +852,7 @@ async def get_current_subscription(current_store = Depends(get_current_store_use
     
     return StoreSubscription(**subscription)
 
-# Store Product endpoints
+# Store Product endpoints (unchanged)
 @app.post("/api/store/products", response_model=StoreProduct)
 async def add_product(product_data: StoreProductCreate, current_store = Depends(get_current_store_user)):
     # Check if store has active subscription
@@ -515,7 +938,7 @@ async def search_products(
     for product in products:
         # Get store info
         store = store_users_collection.find_one({"id": product["store_id"]})
-        if store and store["subscription_status"] == SubscriptionStatus.ACTIVE:
+        if store and store["subscription_status"] in [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIAL]:
             # TODO: Add distance calculation based on zip_code
             distance = None  # Placeholder for now
             
@@ -547,7 +970,7 @@ async def get_local_stores(
     state: Optional[str] = None,
     limit: int = 20
 ):
-    query = {"subscription_status": SubscriptionStatus.ACTIVE}
+    query = {"subscription_status": {"$in": [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIAL]}}
     
     if zip_code:
         query["zip_code"] = zip_code
