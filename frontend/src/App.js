@@ -1,5 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import './App.css';
+import LoadingSpinner from './components/LoadingSpinner';
+import { ToastContainer } from './components/NotificationToast';
+import useToast from './hooks/useToast';
+import ErrorBoundary from './components/ErrorBoundary';
 
 const API_BASE_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
 
