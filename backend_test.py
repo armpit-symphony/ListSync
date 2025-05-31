@@ -1,32 +1,30 @@
 
 import requests
-import uuid
-import time
 import sys
+import time
 from datetime import datetime
+import uuid
+import json
 
-class ShoppingListAPITester:
-    def __init__(self, base_url):
+class ShopSyncTester:
+    def __init__(self, base_url="https://f426259c-dc96-40e1-bd4d-aa7254e15072.preview.emergentagent.com"):
         self.base_url = base_url
-        self.token = None
+        self.admin_token = None
+        self.store_token = None
+        self.household_token = None
         self.tests_run = 0
         self.tests_passed = 0
-        self.user_id = None
-        self.user_type = None
-        self.test_users = []
-        self.test_lists = []
-        self.test_items = []
-        self.test_stores = []
-        self.test_products = []
+        self.test_store_id = None
+        self.test_list_id = None
+        self.test_item_id = None
+        self.test_product_id = None
 
-    def run_test(self, name, method, endpoint, expected_status, data=None, headers=None):
+    def run_test(self, name, method, endpoint, expected_status, data=None, token=None, print_response=False):
         """Run a single API test"""
-        url = f"{self.base_url}{endpoint}"
-        
-        if headers is None:
-            headers = {'Content-Type': 'application/json'}
-            if self.token:
-                headers['Authorization'] = f'Bearer {self.token}'
+        url = f"{self.base_url}/api/{endpoint}"
+        headers = {'Content-Type': 'application/json'}
+        if token:
+            headers['Authorization'] = f'Bearer {token}'
 
         self.tests_run += 1
         print(f"\n🔍 Testing {name}...")
@@ -45,1076 +43,435 @@ class ShoppingListAPITester:
             if success:
                 self.tests_passed += 1
                 print(f"✅ Passed - Status: {response.status_code}")
-                try:
-                    return success, response.json()
-                except:
-                    return success, {}
+                if print_response:
+                    print(f"Response: {json.dumps(response.json(), indent=2)}")
+                return success, response.json() if response.content else {}
             else:
                 print(f"❌ Failed - Expected {expected_status}, got {response.status_code}")
-                try:
-                    error_detail = response.json()
-                    print(f"Error details: {error_detail}")
-                except:
-                    print(f"Response text: {response.text}")
+                if response.content:
+                    print(f"Error: {response.text}")
                 return False, {}
 
         except Exception as e:
             print(f"❌ Failed - Error: {str(e)}")
             return False, {}
 
-    def register_user(self, name, email, password):
-        """Register a new user"""
-        success, response = self.run_test(
-            "User Registration",
-            "POST",
-            "/api/auth/register",
-            200,
-            data={"name": name, "email": email, "password": password}
-        )
-        
-        if success and 'access_token' in response:
-            self.token = response['access_token']
-            self.user_type = response.get('user_type', 'household')
-            self.test_users.append({"email": email, "password": password})
-            return True
-        return False
-
-    def login_user(self, email, password):
-        """Login with existing user"""
-        success, response = self.run_test(
-            "User Login",
-            "POST",
-            "/api/auth/login",
-            200,
-            data={"email": email, "password": password}
-        )
-        
-        if success and 'access_token' in response:
-            self.token = response['access_token']
-            self.user_type = response.get('user_type', 'household')
-            return True
-        return False
-
-    def get_current_user(self):
-        """Get current user info"""
-        success, response = self.run_test(
-            "Get Current User",
-            "GET",
-            "/api/auth/me",
-            200
-        )
-        
-        if success and 'id' in response:
-            self.user_id = response['id']
-            return True, response
-        return False, None
-
-    def create_shopping_list(self, name):
-        """Create a new shopping list"""
-        success, response = self.run_test(
-            "Create Shopping List",
-            "POST",
-            "/api/lists",
-            200,
-            data={"name": name}
-        )
-        
-        if success and 'id' in response:
-            self.test_lists.append(response)
-            return True, response
-        return False, None
-
-    def get_shopping_lists(self):
-        """Get all shopping lists for current user"""
-        success, response = self.run_test(
-            "Get Shopping Lists",
-            "GET",
-            "/api/lists",
-            200
-        )
-        
-        return success, response
-
-    def get_shopping_list(self, list_id):
-        """Get a specific shopping list"""
-        success, response = self.run_test(
-            "Get Shopping List",
-            "GET",
-            f"/api/lists/{list_id}",
-            200
-        )
-        
-        return success, response
-
-    def share_list(self, list_id, email):
-        """Share a list with another user"""
-        success, response = self.run_test(
-            "Share Shopping List",
-            "POST",
-            f"/api/lists/{list_id}/share",
-            200,
-            data={"email": email}
-        )
-        
-        return success, response
-
-    def delete_shopping_list(self, list_id):
-        """Delete a shopping list"""
-        success, response = self.run_test(
-            "Delete Shopping List",
-            "DELETE",
-            f"/api/lists/{list_id}",
-            200
-        )
-        
-        return success, response
-
-    def add_item(self, list_id, name, quantity="1"):
-        """Add an item to a shopping list"""
-        success, response = self.run_test(
-            "Add Item to List",
-            "POST",
-            f"/api/lists/{list_id}/items",
-            200,
-            data={"name": name, "quantity": quantity}
-        )
-        
-        if success and 'id' in response:
-            self.test_items.append(response)
-            return True, response
-        return False, None
-
-    def get_list_items(self, list_id):
-        """Get all items in a shopping list"""
-        success, response = self.run_test(
-            "Get List Items",
-            "GET",
-            f"/api/lists/{list_id}/items",
-            200
-        )
-        
-        return success, response
-
-    def update_item(self, item_id, is_purchased):
-        """Update an item's purchased status"""
-        success, response = self.run_test(
-            "Update Item",
-            "PUT",
-            f"/api/items/{item_id}",
-            200,
-            data={"is_purchased": is_purchased}
-        )
-        
-        return success, response
-
-    def delete_item(self, item_id):
-        """Delete an item from a shopping list"""
-        success, response = self.run_test(
-            "Delete Item",
-            "DELETE",
-            f"/api/items/{item_id}",
-            200
-        )
-        
-        return success, response
-
-    def login_admin(self, email, password):
-        """Login with admin credentials"""
+    # Admin Tests
+    def test_admin_login(self):
+        """Test admin login with default credentials"""
+        print("\n===== ADMIN TESTS =====")
         success, response = self.run_test(
             "Admin Login",
             "POST",
-            "/api/admin/auth/login",
+            "admin/auth/login",
             200,
-            data={"email": email, "password": password}
+            data={"email": "admin@shopsync.com", "password": "admin123"}
         )
-        
         if success and 'access_token' in response:
-            self.token = response['access_token']
-            self.user_type = response.get('user_type', 'admin')
-            return True, response
-        return False, None
+            self.admin_token = response['access_token']
+            print("Admin login successful, token obtained")
+            return True
+        return False
 
-    def get_current_admin(self):
-        """Get current admin info"""
+    def test_admin_me(self):
+        """Test admin profile endpoint"""
         success, response = self.run_test(
-            "Get Current Admin",
+            "Admin Profile",
             "GET",
-            "/api/admin/auth/me",
-            200
-        )
-        
-        if success and 'id' in response:
-            self.user_id = response['id']
-            return True, response
-        return False, None
-
-    def register_admin(self, name, email, password, current_admin_required=True):
-        """Register a new admin (requires existing admin)"""
-        success, response = self.run_test(
-            "Admin Registration",
-            "POST",
-            "/api/admin/auth/register",
+            "admin/auth/me",
             200,
-            data={"name": name, "email": email, "password": password}
+            token=self.admin_token
         )
-        
-        if success and 'access_token' in response:
-            if not current_admin_required:
-                self.token = response['access_token']
-                self.user_type = response.get('user_type', 'admin')
-            return True, response
-        return False, None
+        return success
 
-    def get_admin_stats(self):
-        """Get admin dashboard statistics"""
+    def test_admin_stats(self):
+        """Test admin dashboard statistics"""
         success, response = self.run_test(
-            "Get Admin Stats",
+            "Admin Dashboard Stats",
             "GET",
-            "/api/admin/stats",
-            200
-        )
-        
-        return success, response
-
-    def get_admin_subscriptions(self):
-        """Get all store subscriptions for admin"""
-        success, response = self.run_test(
-            "Get Admin Subscriptions",
-            "GET",
-            "/api/admin/subscriptions",
-            200
-        )
-        
-        return success, response
-
-    def update_payment_config(self, stripe_secret_key=None, stripe_publishable_key=None, 
-                             stripe_endpoint_secret=None, paypal_client_id=None, 
-                             paypal_client_secret=None):
-        """Update payment configuration"""
-        data = {}
-        if stripe_secret_key:
-            data["stripe_secret_key"] = stripe_secret_key
-        if stripe_publishable_key:
-            data["stripe_publishable_key"] = stripe_publishable_key
-        if stripe_endpoint_secret:
-            data["stripe_endpoint_secret"] = stripe_endpoint_secret
-        if paypal_client_id:
-            data["paypal_client_id"] = paypal_client_id
-        if paypal_client_secret:
-            data["paypal_client_secret"] = paypal_client_secret
-            
-        success, response = self.run_test(
-            "Update Payment Configuration",
-            "POST",
-            "/api/admin/payment/config",
+            "admin/stats",
             200,
-            data=data
+            token=self.admin_token,
+            print_response=True
         )
-        
-        return success, response
+        return success
 
-    def get_payment_config_status(self):
-        """Get payment configuration status"""
+    def test_admin_payment_config(self):
+        """Test payment configuration"""
         success, response = self.run_test(
-            "Get Payment Configuration Status",
+            "Get Payment Config Status",
             "GET",
-            "/api/admin/payment/config",
-            200
+            "admin/payment/config",
+            200,
+            token=self.admin_token
         )
         
-        return success, response
-
-    def create_stripe_checkout_session(self, plan_type):
-        """Create a Stripe checkout session"""
-        success, response = self.run_test(
-            f"Create Stripe Checkout Session ({plan_type})",
-            "POST",
-            f"/api/stripe/create-checkout-session?plan_type={plan_type}",
-            200
-        )
-        
-        return success, response
-
-    def test_stripe_webhook(self):
-        """Test Stripe webhook endpoint availability"""
-        # This just tests if the endpoint is available, not actual webhook processing
-        success, response = self.run_test(
-            "Test Stripe Webhook Endpoint",
-            "POST",
-            "/api/stripe/webhook",
-            400,  # Expected to fail with 400 (invalid payload) without proper signature
-            data={}
-        )
-        
-        return success
-        
-    def test_invalid_login(self):
-        """Test login with invalid credentials"""
-        success, _ = self.run_test(
-            "Invalid Login",
-            "POST",
-            "/api/auth/login",
-            401,
-            data={"email": "nonexistent@example.com", "password": "wrongpassword"}
-        )
-        
-        return success
-
-    def test_duplicate_registration(self, name, email, password):
-        """Test registration with duplicate email"""
-        success, _ = self.run_test(
-            "Duplicate Registration",
-            "POST",
-            "/api/auth/register",
-            400,
-            data={"name": name, "email": email, "password": password}
-        )
-        
-        return success
-
-    def register_store(self, store_name, email, password, address, city, state, zip_code, phone=None):
-        """Register a new store"""
-        data = {
-            "store_name": store_name,
-            "email": email,
-            "password": password,
-            "address": address,
-            "city": city,
-            "state": state,
-            "zip_code": zip_code
+        # Test updating payment config
+        test_config = {
+            "stripe_secret_key": "sk_test_example123",
+            "stripe_publishable_key": "pk_test_example123",
+            "stripe_endpoint_secret": "whsec_example123"
         }
-        if phone:
-            data["phone"] = phone
-            
+        
+        success2, response2 = self.run_test(
+            "Update Payment Config",
+            "POST",
+            "admin/payment/config",
+            200,
+            data=test_config,
+            token=self.admin_token
+        )
+        
+        return success and success2
+
+    def test_admin_subscriptions(self):
+        """Test admin subscription monitoring"""
+        success, response = self.run_test(
+            "Get All Subscriptions",
+            "GET",
+            "admin/subscriptions",
+            200,
+            token=self.admin_token,
+            print_response=True
+        )
+        return success
+
+    # Store Tests
+    def test_store_registration(self):
+        """Test store registration with 7-day trial"""
+        print("\n===== STORE TESTS =====")
+        store_email = f"store_{int(time.time())}@test.com"
+        store_data = {
+            "store_name": f"Test Store {int(time.time())}",
+            "email": store_email,
+            "password": "StorePass123!",
+            "address": "123 Test St",
+            "city": "Test City",
+            "state": "TS",
+            "zip_code": "12345",
+            "phone": "555-123-4567"
+        }
+        
         success, response = self.run_test(
             "Store Registration",
             "POST",
-            "/api/store/auth/register",
+            "store/auth/register",
             200,
-            data=data
+            data=store_data
         )
         
         if success and 'access_token' in response:
-            self.token = response['access_token']
-            self.user_type = response.get('user_type', 'store')
-            self.test_stores.append({"email": email, "password": password})
-            return True, response
-        return False, None
+            self.store_token = response['access_token']
+            print("Store registration successful, token obtained")
+            return True
+        return False
 
-    def login_store(self, email, password):
-        """Login with existing store credentials"""
+    def test_store_me(self):
+        """Test store profile endpoint"""
         success, response = self.run_test(
-            "Store Login",
-            "POST",
-            "/api/store/auth/login",
-            200,
-            data={"email": email, "password": password}
-        )
-        
-        if success and 'access_token' in response:
-            self.token = response['access_token']
-            self.user_type = response.get('user_type', 'store')
-            return True, response
-        return False, None
-
-    def get_current_store(self):
-        """Get current store info"""
-        success, response = self.run_test(
-            "Get Current Store",
+            "Store Profile",
             "GET",
-            "/api/store/auth/me",
-            200
-        )
-        
-        if success and 'id' in response:
-            self.user_id = response['id']
-            return True, response
-        return False, None
-
-    def create_subscription(self, plan):
-        """Create a store subscription"""
-        success, response = self.run_test(
-            f"Create {plan.capitalize()} Subscription",
-            "POST",
-            "/api/store/subscription",
+            "store/auth/me",
             200,
-            data={"plan": plan}
+            token=self.store_token,
+            print_response=True
         )
         
-        return success, response
+        if success:
+            # Save store ID for later tests
+            self.test_store_id = response.get('id')
+        
+        return success
 
-    def get_subscription(self):
-        """Get current store subscription"""
+    def test_store_subscription(self):
+        """Test store subscription management"""
         success, response = self.run_test(
             "Get Current Subscription",
             "GET",
-            "/api/store/subscription",
-            200
+            "store/subscription",
+            200,
+            token=self.store_token
         )
         
-        return success, response
-
-    def add_product(self, name, category, price, description=None, is_advertised=True):
-        """Add a product to store inventory"""
-        data = {
-            "name": name,
-            "category": category,
-            "price": price,
-            "is_advertised": is_advertised
+        # Test creating a subscription
+        subscription_data = {
+            "plan": "monthly",
+            "provider": "stripe"
         }
-        if description:
-            data["description"] = description
-            
+        
+        success2, response2 = self.run_test(
+            "Create Subscription",
+            "POST",
+            "store/subscription",
+            200,
+            data=subscription_data,
+            token=self.store_token
+        )
+        
+        return success
+
+    def test_store_products(self):
+        """Test store product management"""
+        # Add a product
+        product_data = {
+            "name": f"Test Product {int(time.time())}",
+            "category": "Groceries",
+            "price": 9.99,
+            "description": "A test product",
+            "is_advertised": True
+        }
+        
         success, response = self.run_test(
             "Add Product",
             "POST",
-            "/api/store/products",
+            "store/products",
             200,
-            data=data
+            data=product_data,
+            token=self.store_token
         )
         
-        if success and 'id' in response:
-            self.test_products.append(response)
-            return True, response
-        return False, None
-
-    def get_store_products(self):
-        """Get all products for current store"""
-        success, response = self.run_test(
+        if success:
+            self.test_product_id = response.get('id')
+        
+        # Get all products
+        success2, response2 = self.run_test(
             "Get Store Products",
             "GET",
-            "/api/store/products",
-            200
-        )
-        
-        return success, response
-
-    def update_product(self, product_id, name, category, price, description=None, is_advertised=True):
-        """Update a product"""
-        data = {
-            "name": name,
-            "category": category,
-            "price": price,
-            "is_advertised": is_advertised
-        }
-        if description:
-            data["description"] = description
-            
-        success, response = self.run_test(
-            "Update Product",
-            "PUT",
-            f"/api/store/products/{product_id}",
+            "store/products",
             200,
-            data=data
+            token=self.store_token,
+            print_response=True
         )
         
-        return success, response
-
-    def delete_product(self, product_id):
-        """Delete a product"""
-        success, response = self.run_test(
-            "Delete Product",
-            "DELETE",
-            f"/api/store/products/{product_id}",
-            200
-        )
-        
-        return success, response
-
-    def search_products(self, query, zip_code=None):
-        """Search for products across stores"""
-        endpoint = f"/api/products/search?query={query}"
-        if zip_code:
-            endpoint += f"&zip_code={zip_code}"
+        # Update a product
+        if self.test_product_id:
+            update_data = {
+                "name": f"Updated Product {int(time.time())}",
+                "category": "Groceries",
+                "price": 12.99,
+                "description": "An updated test product",
+                "is_advertised": True
+            }
             
+            success3, _ = self.run_test(
+                "Update Product",
+                "PUT",
+                f"store/products/{self.test_product_id}",
+                200,
+                data=update_data,
+                token=self.store_token
+            )
+        else:
+            success3 = False
+        
+        return success and success2 and success3
+
+    def test_stripe_checkout(self):
+        """Test Stripe checkout session creation"""
+        success, response = self.run_test(
+            "Create Stripe Checkout Session",
+            "POST",
+            "stripe/create-checkout-session?plan_type=monthly",
+            200,
+            token=self.store_token,
+            print_response=True
+        )
+        
+        return success
+
+    # Household Tests
+    def test_household_registration(self):
+        """Test household registration"""
+        print("\n===== HOUSEHOLD TESTS =====")
+        household_email = f"household_{int(time.time())}@test.com"
+        household_data = {
+            "name": f"Test User {int(time.time())}",
+            "email": household_email,
+            "password": "HouseholdPass123!"
+        }
+        
+        success, response = self.run_test(
+            "Household Registration",
+            "POST",
+            "auth/register",
+            200,
+            data=household_data
+        )
+        
+        if success and 'access_token' in response:
+            self.household_token = response['access_token']
+            print("Household registration successful, token obtained")
+            return True
+        return False
+
+    def test_household_me(self):
+        """Test household profile endpoint"""
+        success, response = self.run_test(
+            "Household Profile",
+            "GET",
+            "auth/me",
+            200,
+            token=self.household_token
+        )
+        return success
+
+    def test_shopping_lists(self):
+        """Test shopping list creation and management"""
+        # Create a list
+        list_data = {
+            "name": f"Test Shopping List {int(time.time())}"
+        }
+        
+        success, response = self.run_test(
+            "Create Shopping List",
+            "POST",
+            "lists",
+            200,
+            data=list_data,
+            token=self.household_token
+        )
+        
+        if success:
+            self.test_list_id = response.get('id')
+        
+        # Get all lists
+        success2, response2 = self.run_test(
+            "Get All Shopping Lists",
+            "GET",
+            "lists",
+            200,
+            token=self.household_token,
+            print_response=True
+        )
+        
+        # Get specific list
+        success3 = False
+        if self.test_list_id:
+            success3, _ = self.run_test(
+                "Get Specific Shopping List",
+                "GET",
+                f"lists/{self.test_list_id}",
+                200,
+                token=self.household_token
+            )
+        
+        return success and success2 and success3
+
+    def test_list_items(self):
+        """Test shopping list item management"""
+        if not self.test_list_id:
+            print("❌ No test list ID available, skipping item tests")
+            return False
+        
+        # Add an item
+        item_data = {
+            "name": f"Test Item {int(time.time())}",
+            "quantity": "2"
+        }
+        
+        success, response = self.run_test(
+            "Add Item to List",
+            "POST",
+            f"lists/{self.test_list_id}/items",
+            200,
+            data=item_data,
+            token=self.household_token
+        )
+        
+        if success:
+            self.test_item_id = response.get('id')
+        
+        # Get all items
+        success2, response2 = self.run_test(
+            "Get All List Items",
+            "GET",
+            f"lists/{self.test_list_id}/items",
+            200,
+            token=self.household_token,
+            print_response=True
+        )
+        
+        # Update an item
+        success3 = False
+        if self.test_item_id:
+            update_data = {
+                "is_purchased": True
+            }
+            
+            success3, _ = self.run_test(
+                "Mark Item as Purchased",
+                "PUT",
+                f"items/{self.test_item_id}",
+                200,
+                data=update_data,
+                token=self.household_token
+            )
+        
+        return success and success2 and success3
+
+    def test_product_search(self):
+        """Test product search functionality"""
         success, response = self.run_test(
             "Search Products",
             "GET",
-            endpoint,
-            200
+            "products/search?query=test",
+            200,
+            token=self.household_token,
+            print_response=True
         )
         
-        return success, response
+        return success
 
-    def get_product_categories(self):
-        """Get all product categories"""
+    def test_local_stores(self):
+        """Test local store discovery"""
         success, response = self.run_test(
-            "Get Product Categories",
+            "Find Local Stores",
             "GET",
-            "/api/products/categories",
-            200
-        )
-        
-        return success, response
-
-    def get_local_stores(self, zip_code=None, city=None, state=None):
-        """Get local stores"""
-        endpoint = "/api/stores/local"
-        params = []
-        
-        if zip_code:
-            params.append(f"zip_code={zip_code}")
-        if city:
-            params.append(f"city={city}")
-        if state:
-            params.append(f"state={state}")
-            
-        if params:
-            endpoint += "?" + "&".join(params)
-            
-        success, response = self.run_test(
-            "Get Local Stores",
-            "GET",
-            endpoint,
-            200
-        )
-        
-        return success, response
-
-    def test_unauthorized_access(self):
-        """Test accessing protected endpoint without token"""
-        success, _ = self.run_test(
-            "Unauthorized Access",
-            "GET",
-            "/api/lists",
-            401,
-            headers={'Content-Type': 'application/json'}
+            "stores/local?zip_code=12345",
+            200,
+            token=self.household_token,
+            print_response=True
         )
         
         return success
 
     def run_all_tests(self):
-        """Run all API tests"""
-        # Generate unique test data
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        test_user1 = {
-            "name": f"Test User 1 {timestamp}",
-            "email": f"testuser1_{timestamp}@example.com",
-            "password": "TestPassword123!"
-        }
-        test_user2 = {
-            "name": f"Test User 2 {timestamp}",
-            "email": f"testuser2_{timestamp}@example.com",
-            "password": "TestPassword123!"
-        }
-        test_store = {
-            "store_name": f"Test Store {timestamp}",
-            "email": f"teststore_{timestamp}@example.com",
-            "password": "StorePass123!",
-            "address": "123 Main St",
-            "city": "Testville",
-            "state": "TS",
-            "zip_code": "12345",
-            "phone": "555-123-4567"
-        }
-        test_admin = {
-            "name": f"Test Admin {timestamp}",
-            "email": f"testadmin_{timestamp}@example.com",
-            "password": "AdminPass123!"
-        }
-        
-        print("\n===== STARTING API TESTS =====\n")
-        
-        print("\n----- ADMIN USER TESTS -----\n")
-        
-        # Test A1: Login with default admin credentials
-        admin_login_success, admin_login_data = self.login_admin("admin@shopsync.com", "admin123")
-        if not admin_login_success:
-            print("❌ Admin login failed, stopping tests")
-            return False
-        
-        # Test A2: Get admin info
-        admin_info_success, admin_info_data = self.get_current_admin()
-        if not admin_info_success:
-            print("❌ Get admin info failed, stopping tests")
-            return False
-        
-        # Test A3: Get admin stats
-        admin_stats_success, admin_stats_data = self.get_admin_stats()
-        if not admin_stats_success:
-            print("❌ Get admin stats failed, stopping tests")
-            return False
-        
-        # Test A4: Get admin subscriptions
-        admin_subs_success, admin_subs_data = self.get_admin_subscriptions()
-        if not admin_subs_success:
-            print("❌ Get admin subscriptions failed, stopping tests")
-            return False
-        
-        # Test A5: Get payment config status
-        payment_config_success, payment_config_data = self.get_payment_config_status()
-        if not payment_config_success:
-            print("❌ Get payment config status failed, stopping tests")
-            return False
-        
-        # Test A6: Update payment config
-        update_config_success, update_config_data = self.update_payment_config(
-            stripe_secret_key="sk_test_example123456789",
-            stripe_publishable_key="pk_test_example123456789",
-            stripe_endpoint_secret="whsec_example123456789"
-        )
-        if not update_config_success:
-            print("❌ Update payment config failed, stopping tests")
-            return False
-        
-        # Test A7: Register new admin
-        new_admin_success, new_admin_data = self.register_admin(
-            test_admin["name"], 
-            test_admin["email"], 
-            test_admin["password"]
-        )
-        if not new_admin_success:
-            print("❌ Register new admin failed, stopping tests")
-            return False
-        
-        # Save admin token for later
-        admin_token = self.token
-        
-        print("\n----- HOUSEHOLD USER TESTS -----\n")
-        
-        # Test 1: Register first user
-        if not self.register_user(test_user1["name"], test_user1["email"], test_user1["password"]):
-            print("❌ User registration failed, stopping tests")
-            return False
-        
-        # Test 2: Get current user info
-        user1_success, user1_data = self.get_current_user()
-        if not user1_success:
-            print("❌ Get current user failed, stopping tests")
-            return False
-        
-        # Test 3: Create a shopping list
-        list1_success, list1_data = self.create_shopping_list(f"Test Shopping List {timestamp}")
-        if not list1_success:
-            print("❌ Create shopping list failed, stopping tests")
-            return False
-        
-        # Test 4: Get all shopping lists
-        lists_success, lists_data = self.get_shopping_lists()
-        if not lists_success:
-            print("❌ Get shopping lists failed, stopping tests")
-            return False
-        
-        # Test 5: Get specific shopping list
-        list_detail_success, _ = self.get_shopping_list(list1_data["id"])
-        if not list_detail_success:
-            print("❌ Get shopping list detail failed, stopping tests")
-            return False
-        
-        # Test 6: Add items to the shopping list
-        item1_success, item1_data = self.add_item(list1_data["id"], f"Test Item 1 {timestamp}", "2")
-        if not item1_success:
-            print("❌ Add item failed, stopping tests")
-            return False
-        
-        item2_success, item2_data = self.add_item(list1_data["id"], f"Test Item 2 {timestamp}", "3")
-        if not item2_success:
-            print("❌ Add second item failed, stopping tests")
-            return False
-        
-        # Test 7: Get list items
-        items_success, items_data = self.get_list_items(list1_data["id"])
-        if not items_success:
-            print("❌ Get list items failed, stopping tests")
-            return False
-        
-        # Test 8: Update item (mark as purchased)
-        update_success, _ = self.update_item(item1_data["id"], True)
-        if not update_success:
-            print("❌ Update item failed, stopping tests")
-            return False
-        
-        # Test 9: Register second user for sharing test
-        # Save current token
-        user1_token = self.token
-        
-        if not self.register_user(test_user2["name"], test_user2["email"], test_user2["password"]):
-            print("❌ Second user registration failed, stopping tests")
-            return False
-        
-        # Get user2 info
-        user2_success, user2_data = self.get_current_user()
-        if not user2_success:
-            print("❌ Get second user info failed, stopping tests")
-            return False
-        
-        # Switch back to user1
-        self.token = user1_token
-        
-        # Test 10: Share list with user2
-        share_success, _ = self.share_list(list1_data["id"], test_user2["email"])
-        if not share_success:
-            print("❌ Share list failed, stopping tests")
-            return False
-        
-        # Test 11: Login as user2
-        if not self.login_user(test_user2["email"], test_user2["password"]):
-            print("❌ Login as second user failed, stopping tests")
-            return False
-        
-        # Test 12: User2 should see the shared list
-        user2_lists_success, user2_lists_data = self.get_shopping_lists()
-        if not user2_lists_success:
-            print("❌ Get second user's lists failed, stopping tests")
-            return False
-        
-        shared_list_found = False
-        for lst in user2_lists_data:
-            if lst["id"] == list1_data["id"]:
-                shared_list_found = True
-                break
-        
-        if not shared_list_found:
-            print("❌ Shared list not found in second user's lists")
-            self.tests_run += 1
-        else:
-            print("✅ Shared list found in second user's lists")
-            self.tests_run += 1
-            self.tests_passed += 1
-        
-        # Test 13: User2 should be able to add items to the shared list
-        user2_item_success, user2_item_data = self.add_item(list1_data["id"], f"User2 Item {timestamp}")
-        if not user2_item_success:
-            print("❌ Second user add item to shared list failed, stopping tests")
-            return False
-        
-        # Test 14: User2 should NOT be able to delete the list (only owner can)
-        user2_delete_success, _ = self.run_test(
-            "Second User Delete List (Should Fail)",
-            "DELETE",
-            f"/api/lists/{list1_data['id']}",
-            403
-        )
-        
-        if not user2_delete_success:
-            print("❌ Access control test failed - second user should not be able to delete list")
-        else:
-            print("✅ Access control working - second user cannot delete list")
-        
-        # Switch back to user1
-        self.token = user1_token
-        
-        # Test 15: Delete an item
-        delete_item_success, _ = self.delete_item(item2_data["id"])
-        if not delete_item_success:
-            print("❌ Delete item failed, stopping tests")
-            return False
-        
-        # Test 16: Delete the list
-        delete_list_success, _ = self.delete_shopping_list(list1_data["id"])
-        if not delete_list_success:
-            print("❌ Delete list failed, stopping tests")
-            return False
-        
-        print("\n----- STORE USER TESTS -----\n")
-        
-        # Test 17: Register a store
-        store_reg_success, store_reg_data = self.register_store(
-            test_store["store_name"],
-            test_store["email"],
-            test_store["password"],
-            test_store["address"],
-            test_store["city"],
-            test_store["state"],
-            test_store["zip_code"],
-            test_store["phone"]
-        )
-        
-        if not store_reg_success:
-            print("❌ Store registration failed, stopping tests")
-            return False
-        
-        # Test 18: Get store info
-        store_info_success, store_info_data = self.get_current_store()
-        if not store_info_success:
-            print("❌ Get store info failed, stopping tests")
-            return False
-        
-        # Verify trial status
-        if store_info_data.get("subscription_status") != "trial":
-            print(f"❌ Expected trial status, got {store_info_data.get('subscription_status')}")
-            self.tests_run += 1
-        else:
-            print("✅ Store has trial status as expected")
-            self.tests_run += 1
-            self.tests_passed += 1
-        
-        # Test 19: Add products
-        product1_success, product1_data = self.add_product(
-            f"Test Product 1 {timestamp}",
-            "Produce",
-            2.99,
-            "Fresh organic product"
-        )
-        
-        if not product1_success:
-            print("❌ Add product failed, stopping tests")
-            return False
-        
-        product2_success, product2_data = self.add_product(
-            f"Test Product 2 {timestamp}",
-            "Dairy",
-            4.99,
-            "Organic dairy product",
-            False  # Not advertised
-        )
-        
-        if not product2_success:
-            print("❌ Add second product failed, stopping tests")
-            return False
-        
-        # Test 20: Get store products
-        products_success, products_data = self.get_store_products()
-        if not products_success:
-            print("❌ Get store products failed, stopping tests")
-            return False
-        
-        if len(products_data) != 2:
-            print(f"❌ Expected 2 products, got {len(products_data)}")
-            self.tests_run += 1
-        else:
-            print("✅ Store has 2 products as expected")
-            self.tests_run += 1
-            self.tests_passed += 1
-        
-        # Test 21: Update product
-        update_product_success, update_product_data = self.update_product(
-            product1_data["id"],
-            product1_data["name"],
-            product1_data["category"],
-            3.49,  # Updated price
-            product1_data["description"],
-            product1_data["is_advertised"]
-        )
-        
-        if not update_product_success:
-            print("❌ Update product failed, stopping tests")
-            return False
-        
-        if update_product_data["price"] != 3.49:
-            print(f"❌ Expected updated price 3.49, got {update_product_data['price']}")
-            self.tests_run += 1
-        else:
-            print("✅ Product price updated successfully")
-            self.tests_run += 1
-            self.tests_passed += 1
-        
-        # Test 22: Create subscription
-        subscription_success, subscription_data = self.create_subscription("monthly")
-        if not subscription_success:
-            print("❌ Create subscription failed, stopping tests")
-            return False
-        
-        # Test 23: Get subscription
-        get_sub_success, get_sub_data = self.get_subscription()
-        if not get_sub_success:
-            print("❌ Get subscription failed, stopping tests")
-            return False
-        
-        # Check for updated pricing
-        if get_sub_data and "monthly_price" in get_sub_data:
-            if get_sub_data["monthly_price"] == 12.00:
-                print("✅ Monthly subscription price is correct ($12.00)")
-                self.tests_run += 1
-                self.tests_passed += 1
-            else:
-                print(f"❌ Expected monthly price $12.00, got ${get_sub_data['monthly_price']}")
-                self.tests_run += 1
-        
-        # Test 24: Create Stripe checkout session
-        store_token = self.token
-        checkout_success, checkout_data = self.create_stripe_checkout_session("monthly")
-        if not checkout_success:
-            print("❌ Create Stripe checkout session failed")
-            self.tests_run += 1
-        else:
-            print("✅ Stripe checkout session created successfully")
-            self.tests_run += 1
-            self.tests_passed += 1
-            
-            # Check if session URL is present
-            if "session_url" in checkout_data:
-                print("✅ Stripe checkout session URL returned")
-                self.tests_run += 1
-                self.tests_passed += 1
-            else:
-                print("❌ Stripe checkout session URL not returned")
-                self.tests_run += 1
-        
-        # Test 25: Test Stripe webhook endpoint
-        webhook_success = self.test_stripe_webhook()
-        if not webhook_success:
-            print("❌ Stripe webhook endpoint test failed")
-            self.tests_run += 1
-        else:
-            print("✅ Stripe webhook endpoint available")
-            self.tests_run += 1
-            self.tests_passed += 1
-        
-        # Test 26: Delete product
-        delete_product_success, _ = self.delete_product(product2_data["id"])
-        if not delete_product_success:
-            print("❌ Delete product failed, stopping tests")
-            return False
-        
-        # Test 27: Public product search (should only find advertised products)
-        # First, clear token to test as unauthenticated user
-        self.token = None
-        
-        search_success, search_results = self.search_products(timestamp)
-        if not search_success:
-            print("❌ Product search failed, stopping tests")
-            return False
-        
-        # Should only find the advertised product
-        advertised_found = False
-        non_advertised_found = False
-        
-        for result in search_results:
-            if result["product"]["id"] == product1_data["id"]:
-                advertised_found = True
-            if result["product"]["id"] == product2_data["id"]:
-                non_advertised_found = True
-        
-        if not advertised_found:
-            print("❌ Advertised product not found in search results")
-            self.tests_run += 1
-        else:
-            print("✅ Advertised product found in search results")
-            self.tests_run += 1
-            self.tests_passed += 1
-        
-        if non_advertised_found:
-            print("❌ Non-advertised product found in search results")
-            self.tests_run += 1
-        else:
-            print("✅ Non-advertised product correctly excluded from search results")
-            self.tests_run += 1
-            self.tests_passed += 1
-        
-        # Test 28: Get product categories
-        categories_success, categories_data = self.get_product_categories()
-        if not categories_success:
-            print("❌ Get product categories failed, stopping tests")
-            return False
-        
-        # Test 29: Get local stores
-        local_stores_success, local_stores_data = self.get_local_stores(city="Testville", state="TS")
-        if not local_stores_success:
-            print("❌ Get local stores failed, stopping tests")
-            return False
-        
-        store_found = False
-        for store in local_stores_data:
-            if store["id"] == store_info_data["id"]:
-                store_found = True
-                break
-        
-        if not store_found:
-            print("❌ Store not found in local stores search")
-            self.tests_run += 1
-        else:
-            print("✅ Store found in local stores search")
-            self.tests_run += 1
-            self.tests_passed += 1
-        
-        # Test 30: Test invalid login
-        invalid_login_success = self.test_invalid_login()
-        if not invalid_login_success:
-            print("❌ Invalid login test failed")
-        
-        # Test 31: Test duplicate registration
-        duplicate_reg_success = self.test_duplicate_registration(
-            test_user1["name"], test_user1["email"], test_user1["password"]
-        )
-        if not duplicate_reg_success:
-            print("❌ Duplicate registration test failed")
-        
-        # Test 32: Test unauthorized access
-        self.token = None
-        unauth_success = self.test_unauthorized_access()
-        if not unauth_success:
-            print("❌ Unauthorized access test failed")
-        
-        # Test 33: Test cross-user type access control
-        # Login as household user
-        if not self.login_user(test_user1["email"], test_user1["password"]):
-            print("❌ Login as household user failed, stopping tests")
-            return False
-        
-        # Try to access store endpoint
-        store_access_success, _ = self.run_test(
-            "Household User Access Store Endpoint (Should Fail)",
-            "GET",
-            "/api/store/products",
-            403
-        )
-        
-        if not store_access_success:
-            print("❌ Cross-user type access control test failed")
-        else:
-            print("✅ Cross-user type access control working - household user cannot access store endpoints")
-            
-        # Login as store user
-        self.token = store_token
-        
-        # Try to access household endpoint
-        household_access_success, _ = self.run_test(
-            "Store User Access Household Endpoint (Should Fail)",
-            "GET",
-            "/api/lists",
-            403
-        )
-        
-        if not household_access_success:
-            print("❌ Cross-user type access control test failed")
-        else:
-            print("✅ Cross-user type access control working - store user cannot access household endpoints")
-        
-        # Test 34: Try to access admin endpoint as store user
-        admin_access_success, _ = self.run_test(
-            "Store User Access Admin Endpoint (Should Fail)",
-            "GET",
-            "/api/admin/stats",
-            403
-        )
-        
-        if not admin_access_success:
-            print("❌ Admin access control test failed")
-        else:
-            print("✅ Admin access control working - store user cannot access admin endpoints")
-        
-        # Login as admin user
-        self.token = admin_token
-        
-        # Test 35: Admin should not be able to access household endpoints
-        admin_household_access, _ = self.run_test(
-            "Admin User Access Household Endpoint (Should Fail)",
-            "GET",
-            "/api/lists",
-            403
-        )
-        
-        if not admin_household_access:
-            print("❌ Admin to household access control test failed")
-        else:
-            print("✅ Access control working - admin cannot access household endpoints")
-        
-        print(f"\n===== API TESTS COMPLETED =====")
-        print(f"Tests passed: {self.tests_passed}/{self.tests_run} ({self.tests_passed/self.tests_run*100:.1f}%)")
+        """Run all tests in sequence"""
+        print("\n🚀 Starting ShopSync API Tests\n")
+        
+        # Admin Tests
+        admin_login = self.test_admin_login()
+        if admin_login:
+            self.test_admin_me()
+            self.test_admin_stats()
+            self.test_admin_payment_config()
+            self.test_admin_subscriptions()
+        
+        # Store Tests
+        store_reg = self.test_store_registration()
+        if store_reg:
+            self.test_store_me()
+            self.test_store_subscription()
+            self.test_store_products()
+            self.test_stripe_checkout()
+        
+        # Household Tests
+        household_reg = self.test_household_registration()
+        if household_reg:
+            self.test_household_me()
+            self.test_shopping_lists()
+            self.test_list_items()
+            self.test_product_search()
+            self.test_local_stores()
+        
+        # Print results
+        print(f"\n📊 Tests passed: {self.tests_passed}/{self.tests_run} ({self.tests_passed/self.tests_run*100:.1f}%)")
         
         return self.tests_passed == self.tests_run
 
 def main():
-    # Get the backend URL from environment
-    backend_url = "https://f426259c-dc96-40e1-bd4d-aa7254e15072.preview.emergentagent.com"
-    
-    # Create tester instance
-    tester = ShoppingListAPITester(backend_url)
-    
-    # Run all tests
+    tester = ShopSyncTester()
     success = tester.run_all_tests()
-    
     return 0 if success else 1
 
 if __name__ == "__main__":
