@@ -347,6 +347,18 @@ class ShoppingListAPITester:
         )
         
         return success
+        
+    def test_invalid_login(self):
+        """Test login with invalid credentials"""
+        success, _ = self.run_test(
+            "Invalid Login",
+            "POST",
+            "/api/auth/login",
+            401,
+            data={"email": "nonexistent@example.com", "password": "wrongpassword"}
+        )
+        
+        return success
 
     def test_duplicate_registration(self, name, email, password):
         """Test registration with duplicate email"""
