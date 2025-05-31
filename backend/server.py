@@ -870,6 +870,9 @@ async def register(user_data: UserCreate):
     
     users_collection.insert_one(user)
     
+    # Send welcome email (async)
+    asyncio.create_task(send_welcome_email(user_data.name, user_data.email, "household"))
+    
     # Create access token
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
