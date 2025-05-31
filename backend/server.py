@@ -461,14 +461,22 @@ async def get_admin_stats(current_admin = Depends(get_current_admin_user)):
 async def get_all_subscriptions(current_admin = Depends(get_current_admin_user)):
     subscriptions = list(store_subscriptions_collection.find({}).sort("created_at", -1))
     
-    # Enrich with store info
+    # Convert MongoDB objects to JSON-serializable format and enrich with store info
+    result_subscriptions = []
     for sub in subscriptions:
+        # Remove MongoDB ObjectId
+        if "_id" in sub:
+            del sub["_id"]
+        
+        # Enrich with store info
         store = store_users_collection.find_one({"id": sub["store_id"]})
         if store:
             sub["store_name"] = store["store_name"]
             sub["store_email"] = store["email"]
+        
+        result_subscriptions.append(sub)
     
-    return {"subscriptions": subscriptions}
+    return {"subscriptions": result_subscriptions}
 
 # Stripe Payment endpoints
 @app.post("/api/stripe/create-checkout-session")
