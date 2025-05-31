@@ -517,7 +517,7 @@ async def create_stripe_checkout_session(plan_type: str, current_store = Depends
                     'recurring': {'interval': plans[plan_type]["interval"]},
                     'product_data': {
                         'name': f'ShopSync Store Subscription - {plan_type.title()}',
-                        'description': f'Monthly subscription for grocery store advertising'
+                        'description': f'{plan_type.title()} subscription for grocery store advertising'
                     }
                 },
                 'quantity': 1
@@ -534,8 +534,10 @@ async def create_stripe_checkout_session(plan_type: str, current_store = Depends
         )
         
         return {"session_url": session.url, "session_id": session.id}
-    except Exception as e:
+    except stripe.error.StripeError as e:
         raise HTTPException(500, f"Stripe error: {str(e)}")
+    except Exception as e:
+        raise HTTPException(500, f"Error creating checkout session: {str(e)}")
 
 @app.post("/api/stripe/webhook")
 async def stripe_webhook(request: Request, stripe_signature: str = Header(None)):
