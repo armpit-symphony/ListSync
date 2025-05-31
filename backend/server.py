@@ -943,6 +943,9 @@ async def register_store(store_data: StoreUserCreate):
     
     store_users_collection.insert_one(store_user)
     
+    # Send welcome email (async)
+    asyncio.create_task(send_welcome_email(store_data.store_name, store_data.email, "store"))
+    
     # Create access token
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
