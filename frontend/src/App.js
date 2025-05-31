@@ -2229,7 +2229,7 @@ const HouseholdDashboard = ({ onSelectList, onLogout }) => {
   );
 };
 
-// Main App Component (updated with admin flow)
+// Main App Component (updated with enhanced UX)
 function App() {
   const [currentView, setCurrentView] = useState('landing'); // landing, household, store, admin
   const [authState, setAuthState] = useState('login'); // login, register
@@ -2237,6 +2237,7 @@ function App() {
   const [userType, setUserType] = useState(null);
   const [selectedList, setSelectedList] = useState(null);
   const [loading, setLoading] = useState(true);
+  const { toasts, removeToast, success, error, info } = useToast();
 
   useEffect(() => {
     // Check if user is already logged in
@@ -2247,14 +2248,16 @@ function App() {
       setIsAuthenticated(true);
       setUserType(savedUserType);
       setCurrentView(savedUserType);
+      info(`Welcome back! You're logged in as ${savedUserType}.`);
     }
     setLoading(false);
-  }, []);
+  }, [info]);
 
   const handleAuthSuccess = (type) => {
     setIsAuthenticated(true);
     setUserType(type);
     setCurrentView(type);
+    success(`Successfully logged in! Welcome to ShopSync.`);
   };
 
   const handleLogout = () => {
@@ -2262,6 +2265,7 @@ function App() {
     setUserType(null);
     setSelectedList(null);
     setCurrentView('landing');
+    info('You have been logged out successfully.');
   };
 
   const handleSelectList = (list) => {
@@ -2274,94 +2278,117 @@ function App() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+      <ErrorBoundary>
+        <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+          <LoadingSpinner size="xl" message="Loading ShopSync..." />
+        </div>
+      </ErrorBoundary>
+    );
+  }
+
+  return (
+    <ErrorBoundary>
+      <div className="app">
+        <ToastContainer toasts={toasts} removeToast={removeToast} />
+        
+        {/* Show appropriate view based on authentication and user type */}
+        {!isAuthenticated ? (
+          <>
+            {currentView === 'landing' && (
+              <LandingPage 
+                onHouseholdLogin={() => setCurrentView('household-login')}
+                onStoreLogin={() => setCurrentView('store-login')}
+                onAdminLogin={() => setCurrentView('admin-login')}
+              />
+            )}
+
+            {currentView === 'admin-login' && (
+              <AdminLogin
+                onLoginSuccess={handleAuthSuccess}
+                onBack={() => setCurrentView('landing')}
+                showToast={{ success, error }}
+              />
+            )}
+
+            {currentView === 'household-login' && (
+              <>
+                {authState === 'login' ? (
+                  <HouseholdLogin
+                    onLoginSuccess={handleAuthSuccess}
+                    switchToRegister={() => setAuthState('register')}
+                    onBack={() => setCurrentView('landing')}
+                    showToast={{ success, error }}
+                  />
+                ) : (
+                  <HouseholdRegister
+                    onRegisterSuccess={handleAuthSuccess}
+                    switchToLogin={() => setAuthState('login')}
+                    onBack={() => setCurrentView('landing')}
+                    showToast={{ success, error }}
+                  />
+                )}
+              </>
+            )}
+
+            {currentView === 'store-login' && (
+              <>
+                {authState === 'login' ? (
+                  <StoreLogin
+                    onLoginSuccess={handleAuthSuccess}
+                    switchToRegister={() => setAuthState('register')}
+                    onBack={() => setCurrentView('landing')}
+                    showToast={{ success, error }}
+                  />
+                ) : (
+                  <StoreRegister
+                    onRegisterSuccess={handleAuthSuccess}
+                    switchToLogin={() => setAuthState('login')}
+                    onBack={() => setCurrentView('landing')}
+                    showToast={{ success, error }}
+                  />
+                )}
+              </>
+            )}
+          </>
+        ) : (
+          <>
+            {/* Authenticated views */}
+            {userType === 'admin' && (
+              <AdminDashboard 
+                onLogout={handleLogout} 
+                showToast={{ success, error, info }}
+              />
+            )}
+
+            {userType === 'store' && (
+              <StoreDashboard 
+                onLogout={handleLogout}
+                showToast={{ success, error, info }}
+              />
+            )}
+
+            {userType === 'household' && (
+              <>
+                {selectedList ? (
+                  <ShoppingListView
+                    list={selectedList}
+                    onBack={handleBackToDashboard}
+                    showToast={{ success, error, info }}
+                  />
+                ) : (
+                  <HouseholdDashboard
+                    onSelectList={handleSelectList}
+                    onLogout={handleLogout}
+                    showToast={{ success, error, info }}
+                  />
+                )}
+              </>
+            )}
+          </>
+        )}
       </div>
-    );
-  }
-
-  // Show appropriate view based on authentication and user type
-  if (!isAuthenticated) {
-    if (currentView === 'landing') {
-      return (
-        <LandingPage 
-          onHouseholdLogin={() => setCurrentView('household-login')}
-          onStoreLogin={() => setCurrentView('store-login')}
-          onAdminLogin={() => setCurrentView('admin-login')}
-        />
-      );
-    }
-
-    if (currentView === 'admin-login') {
-      return (
-        <AdminLogin
-          onLoginSuccess={handleAuthSuccess}
-          onBack={() => setCurrentView('landing')}
-        />
-      );
-    }
-
-    if (currentView === 'household-login') {
-      return authState === 'login' ? (
-        <HouseholdLogin
-          onLoginSuccess={handleAuthSuccess}
-          switchToRegister={() => setAuthState('register')}
-          onBack={() => setCurrentView('landing')}
-        />
-      ) : (
-        <HouseholdRegister
-          onRegisterSuccess={handleAuthSuccess}
-          switchToLogin={() => setAuthState('login')}
-          onBack={() => setCurrentView('landing')}
-        />
-      );
-    }
-
-    if (currentView === 'store-login') {
-      return authState === 'login' ? (
-        <StoreLogin
-          onLoginSuccess={handleAuthSuccess}
-          switchToRegister={() => setAuthState('register')}
-          onBack={() => setCurrentView('landing')}
-        />
-      ) : (
-        <StoreRegister
-          onRegisterSuccess={handleAuthSuccess}
-          switchToLogin={() => setAuthState('login')}
-          onBack={() => setCurrentView('landing')}
-        />
-      );
-    }
-  }
-
-  // Authenticated views
-  if (userType === 'admin') {
-    return <AdminDashboard onLogout={handleLogout} />;
-  }
-
-  if (userType === 'store') {
-    return <StoreDashboard onLogout={handleLogout} />;
-  }
-
-  if (userType === 'household') {
-    if (selectedList) {
-      return (
-        <ShoppingListView
-          list={selectedList}
-          onBack={handleBackToDashboard}
-        />
-      );
-    }
-
-    return (
-      <HouseholdDashboard
-        onSelectList={handleSelectList}
-        onLogout={handleLogout}
-      />
-    );
-  }
-
-  return <LandingPage onHouseholdLogin={() => setCurrentView('household-login')} onStoreLogin={() => setCurrentView('store-login')} onAdminLogin={() => setCurrentView('admin-login')} />;
+    </ErrorBoundary>
+  );
 }
 
 export default App;
