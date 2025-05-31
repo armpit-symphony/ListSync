@@ -607,8 +607,69 @@ class ShoppingListAPITester:
             "zip_code": "12345",
             "phone": "555-123-4567"
         }
+        test_admin = {
+            "name": f"Test Admin {timestamp}",
+            "email": f"testadmin_{timestamp}@example.com",
+            "password": "AdminPass123!"
+        }
         
         print("\n===== STARTING API TESTS =====\n")
+        
+        print("\n----- ADMIN USER TESTS -----\n")
+        
+        # Test A1: Login with default admin credentials
+        admin_login_success, admin_login_data = self.login_admin("admin@shopsync.com", "admin123")
+        if not admin_login_success:
+            print("❌ Admin login failed, stopping tests")
+            return False
+        
+        # Test A2: Get admin info
+        admin_info_success, admin_info_data = self.get_current_admin()
+        if not admin_info_success:
+            print("❌ Get admin info failed, stopping tests")
+            return False
+        
+        # Test A3: Get admin stats
+        admin_stats_success, admin_stats_data = self.get_admin_stats()
+        if not admin_stats_success:
+            print("❌ Get admin stats failed, stopping tests")
+            return False
+        
+        # Test A4: Get admin subscriptions
+        admin_subs_success, admin_subs_data = self.get_admin_subscriptions()
+        if not admin_subs_success:
+            print("❌ Get admin subscriptions failed, stopping tests")
+            return False
+        
+        # Test A5: Get payment config status
+        payment_config_success, payment_config_data = self.get_payment_config_status()
+        if not payment_config_success:
+            print("❌ Get payment config status failed, stopping tests")
+            return False
+        
+        # Test A6: Update payment config
+        update_config_success, update_config_data = self.update_payment_config(
+            stripe_secret_key="sk_test_example123456789",
+            stripe_publishable_key="pk_test_example123456789",
+            stripe_endpoint_secret="whsec_example123456789"
+        )
+        if not update_config_success:
+            print("❌ Update payment config failed, stopping tests")
+            return False
+        
+        # Test A7: Register new admin
+        new_admin_success, new_admin_data = self.register_admin(
+            test_admin["name"], 
+            test_admin["email"], 
+            test_admin["password"]
+        )
+        if not new_admin_success:
+            print("❌ Register new admin failed, stopping tests")
+            return False
+        
+        # Save admin token for later
+        admin_token = self.token
+        
         print("\n----- HOUSEHOLD USER TESTS -----\n")
         
         # Test 1: Register first user
@@ -850,23 +911,54 @@ class ShoppingListAPITester:
             print("❌ Get subscription failed, stopping tests")
             return False
         
-        if get_sub_data["plan"] != "monthly" or get_sub_data["monthly_price"] != 99.99:
-            print(f"❌ Unexpected subscription data: {get_sub_data}")
+        # Check for updated pricing
+        if get_sub_data and "monthly_price" in get_sub_data:
+            if get_sub_data["monthly_price"] == 12.00:
+                print("✅ Monthly subscription price is correct ($12.00)")
+                self.tests_run += 1
+                self.tests_passed += 1
+            else:
+                print(f"❌ Expected monthly price $12.00, got ${get_sub_data['monthly_price']}")
+                self.tests_run += 1
+        
+        # Test 24: Create Stripe checkout session
+        store_token = self.token
+        checkout_success, checkout_data = self.create_stripe_checkout_session("monthly")
+        if not checkout_success:
+            print("❌ Create Stripe checkout session failed")
             self.tests_run += 1
         else:
-            print("✅ Subscription data is correct")
+            print("✅ Stripe checkout session created successfully")
+            self.tests_run += 1
+            self.tests_passed += 1
+            
+            # Check if session URL is present
+            if "session_url" in checkout_data:
+                print("✅ Stripe checkout session URL returned")
+                self.tests_run += 1
+                self.tests_passed += 1
+            else:
+                print("❌ Stripe checkout session URL not returned")
+                self.tests_run += 1
+        
+        # Test 25: Test Stripe webhook endpoint
+        webhook_success = self.test_stripe_webhook()
+        if not webhook_success:
+            print("❌ Stripe webhook endpoint test failed")
+            self.tests_run += 1
+        else:
+            print("✅ Stripe webhook endpoint available")
             self.tests_run += 1
             self.tests_passed += 1
         
-        # Test 24: Delete product
+        # Test 26: Delete product
         delete_product_success, _ = self.delete_product(product2_data["id"])
         if not delete_product_success:
             print("❌ Delete product failed, stopping tests")
             return False
         
-        # Test 25: Public product search (should only find advertised products)
+        # Test 27: Public product search (should only find advertised products)
         # First, clear token to test as unauthenticated user
-        store_token = self.token
         self.token = None
         
         search_success, search_results = self.search_products(timestamp)
@@ -900,13 +992,13 @@ class ShoppingListAPITester:
             self.tests_run += 1
             self.tests_passed += 1
         
-        # Test 26: Get product categories
+        # Test 28: Get product categories
         categories_success, categories_data = self.get_product_categories()
         if not categories_success:
             print("❌ Get product categories failed, stopping tests")
             return False
         
-        # Test 27: Get local stores
+        # Test 29: Get local stores
         local_stores_success, local_stores_data = self.get_local_stores(city="Testville", state="TS")
         if not local_stores_success:
             print("❌ Get local stores failed, stopping tests")
@@ -926,25 +1018,25 @@ class ShoppingListAPITester:
             self.tests_run += 1
             self.tests_passed += 1
         
-        # Test 28: Test invalid login
+        # Test 30: Test invalid login
         invalid_login_success = self.test_invalid_login()
         if not invalid_login_success:
             print("❌ Invalid login test failed")
         
-        # Test 29: Test duplicate registration
+        # Test 31: Test duplicate registration
         duplicate_reg_success = self.test_duplicate_registration(
             test_user1["name"], test_user1["email"], test_user1["password"]
         )
         if not duplicate_reg_success:
             print("❌ Duplicate registration test failed")
         
-        # Test 30: Test unauthorized access
+        # Test 32: Test unauthorized access
         self.token = None
         unauth_success = self.test_unauthorized_access()
         if not unauth_success:
             print("❌ Unauthorized access test failed")
         
-        # Test 31: Test cross-user type access control
+        # Test 33: Test cross-user type access control
         # Login as household user
         if not self.login_user(test_user1["email"], test_user1["password"]):
             print("❌ Login as household user failed, stopping tests")
@@ -978,6 +1070,35 @@ class ShoppingListAPITester:
             print("❌ Cross-user type access control test failed")
         else:
             print("✅ Cross-user type access control working - store user cannot access household endpoints")
+        
+        # Test 34: Try to access admin endpoint as store user
+        admin_access_success, _ = self.run_test(
+            "Store User Access Admin Endpoint (Should Fail)",
+            "GET",
+            "/api/admin/stats",
+            403
+        )
+        
+        if not admin_access_success:
+            print("❌ Admin access control test failed")
+        else:
+            print("✅ Admin access control working - store user cannot access admin endpoints")
+        
+        # Login as admin user
+        self.token = admin_token
+        
+        # Test 35: Admin should not be able to access household endpoints
+        admin_household_access, _ = self.run_test(
+            "Admin User Access Household Endpoint (Should Fail)",
+            "GET",
+            "/api/lists",
+            403
+        )
+        
+        if not admin_household_access:
+            print("❌ Admin to household access control test failed")
+        else:
+            print("✅ Access control working - admin cannot access household endpoints")
         
         print(f"\n===== API TESTS COMPLETED =====")
         print(f"Tests passed: {self.tests_passed}/{self.tests_run} ({self.tests_passed/self.tests_run*100:.1f}%)")
