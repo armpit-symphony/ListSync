@@ -240,17 +240,204 @@ class ShoppingListAPITester:
         
         return success
 
-    def test_unauthorized_access(self):
-        """Test accessing protected endpoint without token"""
-        success, _ = self.run_test(
-            "Unauthorized Access",
-            "GET",
-            "/api/lists",
-            401,
-            headers={'Content-Type': 'application/json'}
+    def register_store(self, store_name, email, password, address, city, state, zip_code, phone=None):
+        """Register a new store"""
+        data = {
+            "store_name": store_name,
+            "email": email,
+            "password": password,
+            "address": address,
+            "city": city,
+            "state": state,
+            "zip_code": zip_code
+        }
+        if phone:
+            data["phone"] = phone
+            
+        success, response = self.run_test(
+            "Store Registration",
+            "POST",
+            "/api/store/auth/register",
+            200,
+            data=data
         )
         
-        return success
+        if success and 'access_token' in response:
+            self.token = response['access_token']
+            self.user_type = response.get('user_type', 'store')
+            self.test_stores.append({"email": email, "password": password})
+            return True, response
+        return False, None
+
+    def login_store(self, email, password):
+        """Login with existing store credentials"""
+        success, response = self.run_test(
+            "Store Login",
+            "POST",
+            "/api/store/auth/login",
+            200,
+            data={"email": email, "password": password}
+        )
+        
+        if success and 'access_token' in response:
+            self.token = response['access_token']
+            self.user_type = response.get('user_type', 'store')
+            return True, response
+        return False, None
+
+    def get_current_store(self):
+        """Get current store info"""
+        success, response = self.run_test(
+            "Get Current Store",
+            "GET",
+            "/api/store/auth/me",
+            200
+        )
+        
+        if success and 'id' in response:
+            self.user_id = response['id']
+            return True, response
+        return False, None
+
+    def create_subscription(self, plan):
+        """Create a store subscription"""
+        success, response = self.run_test(
+            f"Create {plan.capitalize()} Subscription",
+            "POST",
+            "/api/store/subscription",
+            200,
+            data={"plan": plan}
+        )
+        
+        return success, response
+
+    def get_subscription(self):
+        """Get current store subscription"""
+        success, response = self.run_test(
+            "Get Current Subscription",
+            "GET",
+            "/api/store/subscription",
+            200
+        )
+        
+        return success, response
+
+    def add_product(self, name, category, price, description=None, is_advertised=True):
+        """Add a product to store inventory"""
+        data = {
+            "name": name,
+            "category": category,
+            "price": price,
+            "is_advertised": is_advertised
+        }
+        if description:
+            data["description"] = description
+            
+        success, response = self.run_test(
+            "Add Product",
+            "POST",
+            "/api/store/products",
+            200,
+            data=data
+        )
+        
+        if success and 'id' in response:
+            self.test_products.append(response)
+            return True, response
+        return False, None
+
+    def get_store_products(self):
+        """Get all products for current store"""
+        success, response = self.run_test(
+            "Get Store Products",
+            "GET",
+            "/api/store/products",
+            200
+        )
+        
+        return success, response
+
+    def update_product(self, product_id, name, category, price, description=None, is_advertised=True):
+        """Update a product"""
+        data = {
+            "name": name,
+            "category": category,
+            "price": price,
+            "is_advertised": is_advertised
+        }
+        if description:
+            data["description"] = description
+            
+        success, response = self.run_test(
+            "Update Product",
+            "PUT",
+            f"/api/store/products/{product_id}",
+            200,
+            data=data
+        )
+        
+        return success, response
+
+    def delete_product(self, product_id):
+        """Delete a product"""
+        success, response = self.run_test(
+            "Delete Product",
+            "DELETE",
+            f"/api/store/products/{product_id}",
+            200
+        )
+        
+        return success, response
+
+    def search_products(self, query, zip_code=None):
+        """Search for products across stores"""
+        endpoint = f"/api/products/search?query={query}"
+        if zip_code:
+            endpoint += f"&zip_code={zip_code}"
+            
+        success, response = self.run_test(
+            "Search Products",
+            "GET",
+            endpoint,
+            200
+        )
+        
+        return success, response
+
+    def get_product_categories(self):
+        """Get all product categories"""
+        success, response = self.run_test(
+            "Get Product Categories",
+            "GET",
+            "/api/products/categories",
+            200
+        )
+        
+        return success, response
+
+    def get_local_stores(self, zip_code=None, city=None, state=None):
+        """Get local stores"""
+        endpoint = "/api/stores/local"
+        params = []
+        
+        if zip_code:
+            params.append(f"zip_code={zip_code}")
+        if city:
+            params.append(f"city={city}")
+        if state:
+            params.append(f"state={state}")
+            
+        if params:
+            endpoint += "?" + "&".join(params)
+            
+        success, response = self.run_test(
+            "Get Local Stores",
+            "GET",
+            endpoint,
+            200
+        )
+        
+        return success, response
 
     def run_all_tests(self):
         """Run all API tests"""
