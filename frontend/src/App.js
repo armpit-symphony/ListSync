@@ -28,8 +28,96 @@ const apiCall = async (endpoint, options = {}) => {
   return response.json();
 };
 
-// Login Component
-const Login = ({ onLoginSuccess, switchToRegister }) => {
+// Landing Page Component
+const LandingPage = ({ onHouseholdLogin, onStoreLogin }) => {
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center p-4">
+      <div className="max-w-4xl w-full text-center">
+        <div className="mb-12">
+          <h1 className="text-5xl font-bold text-white mb-6">ShopSync</h1>
+          <p className="text-xl text-blue-100 mb-8">
+            The shared shopping list platform connecting households with local grocery stores
+          </p>
+        </div>
+
+        <div className="grid md:grid-cols-2 gap-8 max-w-3xl mx-auto">
+          {/* Household Users */}
+          <div className="bg-white rounded-xl shadow-2xl p-8 hover:transform hover:scale-105 transition duration-300">
+            <div className="text-6xl mb-4">🏠</div>
+            <h2 className="text-2xl font-bold text-gray-800 mb-4">For Households</h2>
+            <p className="text-gray-600 mb-6">
+              Create shared shopping lists with your family. See local store prices and never forget an item again.
+            </p>
+            <div className="space-y-3 mb-6 text-left">
+              <div className="flex items-center text-gray-700">
+                <span className="text-green-500 mr-2">✓</span>
+                Shared family shopping lists
+              </div>
+              <div className="flex items-center text-gray-700">
+                <span className="text-green-500 mr-2">✓</span>
+                Real-time collaboration
+              </div>
+              <div className="flex items-center text-gray-700">
+                <span className="text-green-500 mr-2">✓</span>
+                Local store prices
+              </div>
+              <div className="flex items-center text-gray-700">
+                <span className="text-green-500 mr-2">✓</span>
+                Free forever
+              </div>
+            </div>
+            <button
+              onClick={onHouseholdLogin}
+              className="w-full bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 px-4 rounded-lg transition duration-200"
+            >
+              Get Started - Free
+            </button>
+          </div>
+
+          {/* Grocery Stores */}
+          <div className="bg-white rounded-xl shadow-2xl p-8 hover:transform hover:scale-105 transition duration-300">
+            <div className="text-6xl mb-4">🏪</div>
+            <h2 className="text-2xl font-bold text-gray-800 mb-4">For Grocery Stores</h2>
+            <p className="text-gray-600 mb-6">
+              Advertise your products to local families. Increase foot traffic and customer engagement.
+            </p>
+            <div className="space-y-3 mb-6 text-left">
+              <div className="flex items-center text-gray-700">
+                <span className="text-green-500 mr-2">✓</span>
+                Product advertising platform
+              </div>
+              <div className="flex items-center text-gray-700">
+                <span className="text-green-500 mr-2">✓</span>
+                Target local customers
+              </div>
+              <div className="flex items-center text-gray-700">
+                <span className="text-green-500 mr-2">✓</span>
+                Flexible pricing plans
+              </div>
+              <div className="flex items-center text-gray-700">
+                <span className="text-green-500 mr-2">✓</span>
+                7-day free trial
+              </div>
+            </div>
+            <button
+              onClick={onStoreLogin}
+              className="w-full bg-green-500 hover:bg-green-600 text-white font-semibold py-3 px-4 rounded-lg transition duration-200"
+            >
+              Start Free Trial
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-12 text-blue-100">
+          <p className="text-lg">Trusted by families and stores nationwide</p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Household Login Component
+const HouseholdLogin = ({ onLoginSuccess, switchToRegister, onBack }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -47,7 +135,8 @@ const Login = ({ onLoginSuccess, switchToRegister }) => {
       });
 
       localStorage.setItem('token', response.access_token);
-      onLoginSuccess();
+      localStorage.setItem('userType', response.user_type);
+      onLoginSuccess('household');
     } catch (err) {
       setError(err.message);
     } finally {
@@ -59,6 +148,12 @@ const Login = ({ onLoginSuccess, switchToRegister }) => {
     <div className="min-h-screen bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center p-4">
       <div className="max-w-md w-full bg-white rounded-xl shadow-2xl p-8">
         <div className="text-center mb-8">
+          <button
+            onClick={onBack}
+            className="text-gray-600 hover:text-gray-800 mb-4"
+          >
+            ← Back to Home
+          </button>
           <h1 className="text-3xl font-bold text-gray-800 mb-2">Welcome Back</h1>
           <p className="text-gray-600">Sign in to your shared shopping lists</p>
         </div>
@@ -123,8 +218,8 @@ const Login = ({ onLoginSuccess, switchToRegister }) => {
   );
 };
 
-// Register Component
-const Register = ({ onRegisterSuccess, switchToLogin }) => {
+// Household Register Component
+const HouseholdRegister = ({ onRegisterSuccess, switchToLogin, onBack }) => {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -143,7 +238,8 @@ const Register = ({ onRegisterSuccess, switchToLogin }) => {
       });
 
       localStorage.setItem('token', response.access_token);
-      onRegisterSuccess();
+      localStorage.setItem('userType', response.user_type);
+      onRegisterSuccess('household');
     } catch (err) {
       setError(err.message);
     } finally {
@@ -155,7 +251,13 @@ const Register = ({ onRegisterSuccess, switchToLogin }) => {
     <div className="min-h-screen bg-gradient-to-br from-green-500 to-blue-600 flex items-center justify-center p-4">
       <div className="max-w-md w-full bg-white rounded-xl shadow-2xl p-8">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-800 mb-2">Join Us</h1>
+          <button
+            onClick={onBack}
+            className="text-gray-600 hover:text-gray-800 mb-4"
+          >
+            ← Back to Home
+          </button>
+          <h1 className="text-3xl font-bold text-gray-800 mb-2">Join ShopSync</h1>
           <p className="text-gray-600">Create your account to start sharing lists</p>
         </div>
 
@@ -233,62 +335,354 @@ const Register = ({ onRegisterSuccess, switchToLogin }) => {
   );
 };
 
-// Dashboard Component
-const Dashboard = ({ onSelectList, onLogout }) => {
-  const [lists, setLists] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [newListName, setNewListName] = useState('');
-  const [creating, setCreating] = useState(false);
-  const [user, setUser] = useState(null);
+// Store Login Component
+const StoreLogin = ({ onLoginSuccess, switchToRegister, onBack }) => {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  useEffect(() => {
-    fetchUserInfo();
-    fetchLists();
-  }, []);
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
 
-  const fetchUserInfo = async () => {
     try {
-      const userData = await apiCall('/api/auth/me');
-      setUser(userData);
-    } catch (err) {
-      console.error('Failed to fetch user info:', err);
-    }
-  };
+      const response = await apiCall('/api/store/auth/login', {
+        method: 'POST',
+        body: { email, password },
+      });
 
-  const fetchLists = async () => {
-    try {
-      const listsData = await apiCall('/api/lists');
-      setLists(listsData);
+      localStorage.setItem('token', response.access_token);
+      localStorage.setItem('userType', response.user_type);
+      onLoginSuccess('store');
     } catch (err) {
-      console.error('Failed to fetch lists:', err);
+      setError(err.message);
     } finally {
       setLoading(false);
     }
   };
 
-  const createList = async (e) => {
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-green-500 to-blue-600 flex items-center justify-center p-4">
+      <div className="max-w-md w-full bg-white rounded-xl shadow-2xl p-8">
+        <div className="text-center mb-8">
+          <button
+            onClick={onBack}
+            className="text-gray-600 hover:text-gray-800 mb-4"
+          >
+            ← Back to Home
+          </button>
+          <h1 className="text-3xl font-bold text-gray-800 mb-2">Store Login</h1>
+          <p className="text-gray-600">Access your store dashboard</p>
+        </div>
+
+        <form onSubmit={handleLogin} className="space-y-6">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Email Address
+            </label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              placeholder="Enter your store email"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Password
+            </label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              placeholder="Enter your password"
+              required
+            />
+          </div>
+
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+              {error}
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full bg-green-500 hover:bg-green-600 text-white font-semibold py-3 px-4 rounded-lg transition duration-200 disabled:opacity-50"
+          >
+            {loading ? 'Signing In...' : 'Sign In'}
+          </button>
+        </form>
+
+        <div className="mt-6 text-center">
+          <p className="text-gray-600">
+            New store?{' '}
+            <button
+              onClick={switchToRegister}
+              className="text-green-500 hover:text-green-600 font-semibold"
+            >
+              Start free trial
+            </button>
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Store Register Component
+const StoreRegister = ({ onRegisterSuccess, switchToLogin, onBack }) => {
+  const [formData, setFormData] = useState({
+    store_name: '',
+    email: '',
+    password: '',
+    address: '',
+    city: '',
+    state: '',
+    zip_code: '',
+    phone: ''
+  });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleInputChange = (e) => {
+    setFormData({
+      ...formData,
+      [e.target.name]: e.target.value
+    });
+  };
+
+  const handleRegister = async (e) => {
     e.preventDefault();
-    setCreating(true);
+    setLoading(true);
+    setError('');
 
     try {
-      await apiCall('/api/lists', {
+      const response = await apiCall('/api/store/auth/register', {
         method: 'POST',
-        body: { name: newListName },
+        body: formData,
       });
 
-      setNewListName('');
-      setShowCreateModal(false);
-      fetchLists();
+      localStorage.setItem('token', response.access_token);
+      localStorage.setItem('userType', response.user_type);
+      onRegisterSuccess('store');
     } catch (err) {
-      console.error('Failed to create list:', err);
+      setError(err.message);
     } finally {
-      setCreating(false);
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-green-500 to-blue-600 flex items-center justify-center p-4">
+      <div className="max-w-2xl w-full bg-white rounded-xl shadow-2xl p-8">
+        <div className="text-center mb-8">
+          <button
+            onClick={onBack}
+            className="text-gray-600 hover:text-gray-800 mb-4"
+          >
+            ← Back to Home
+          </button>
+          <h1 className="text-3xl font-bold text-gray-800 mb-2">Join as a Store</h1>
+          <p className="text-gray-600">Start your 7-day free trial</p>
+        </div>
+
+        <form onSubmit={handleRegister} className="space-y-6">
+          <div className="grid md:grid-cols-2 gap-6">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Store Name
+              </label>
+              <input
+                type="text"
+                name="store_name"
+                value={formData.store_name}
+                onChange={handleInputChange}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                placeholder="Your Store Name"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Email Address
+              </label>
+              <input
+                type="email"
+                name="email"
+                value={formData.email}
+                onChange={handleInputChange}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                placeholder="store@example.com"
+                required
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Password
+            </label>
+            <input
+              type="password"
+              name="password"
+              value={formData.password}
+              onChange={handleInputChange}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              placeholder="Create a password"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Address
+            </label>
+            <input
+              type="text"
+              name="address"
+              value={formData.address}
+              onChange={handleInputChange}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              placeholder="Store address"
+              required
+            />
+          </div>
+
+          <div className="grid md:grid-cols-3 gap-6">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                City
+              </label>
+              <input
+                type="text"
+                name="city"
+                value={formData.city}
+                onChange={handleInputChange}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                placeholder="City"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                State
+              </label>
+              <input
+                type="text"
+                name="state"
+                value={formData.state}
+                onChange={handleInputChange}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                placeholder="State"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                ZIP Code
+              </label>
+              <input
+                type="text"
+                name="zip_code"
+                value={formData.zip_code}
+                onChange={handleInputChange}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                placeholder="ZIP"
+                required
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Phone (Optional)
+            </label>
+            <input
+              type="tel"
+              name="phone"
+              value={formData.phone}
+              onChange={handleInputChange}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              placeholder="Store phone number"
+            />
+          </div>
+
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+              {error}
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full bg-green-500 hover:bg-green-600 text-white font-semibold py-3 px-4 rounded-lg transition duration-200 disabled:opacity-50"
+          >
+            {loading ? 'Creating Account...' : 'Start Free Trial'}
+          </button>
+        </form>
+
+        <div className="mt-6 text-center">
+          <p className="text-gray-600">
+            Already have an account?{' '}
+            <button
+              onClick={switchToLogin}
+              className="text-green-500 hover:text-green-600 font-semibold"
+            >
+              Sign in
+            </button>
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Store Dashboard Component
+const StoreDashboard = ({ onLogout }) => {
+  const [storeInfo, setStoreInfo] = useState(null);
+  const [subscription, setSubscription] = useState(null);
+  const [products, setProducts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState('overview');
+  const [showAddProduct, setShowAddProduct] = useState(false);
+
+  useEffect(() => {
+    fetchStoreData();
+  }, []);
+
+  const fetchStoreData = async () => {
+    try {
+      const [storeData, subscriptionData, productsData] = await Promise.all([
+        apiCall('/api/store/auth/me'),
+        apiCall('/api/store/subscription'),
+        apiCall('/api/store/products')
+      ]);
+
+      setStoreInfo(storeData);
+      setSubscription(subscriptionData);
+      setProducts(productsData);
+    } catch (err) {
+      console.error('Failed to fetch store data:', err);
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleLogout = () => {
     localStorage.removeItem('token');
+    localStorage.removeItem('userType');
     onLogout();
   };
 
@@ -296,8 +690,8 @@ const Dashboard = ({ onSelectList, onLogout }) => {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading your shopping lists...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-500 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading store dashboard...</p>
         </div>
       </div>
     );
@@ -307,10 +701,13 @@ const Dashboard = ({ onSelectList, onLogout }) => {
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <header className="bg-white shadow-sm border-b">
-        <div className="max-w-6xl mx-auto px-4 py-4 flex justify-between items-center">
+        <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
           <div>
-            <h1 className="text-2xl font-bold text-gray-800">Shopping Lists</h1>
-            {user && <p className="text-gray-600">Welcome back, {user.name}!</p>}
+            <h1 className="text-2xl font-bold text-gray-800">{storeInfo?.store_name}</h1>
+            <p className="text-gray-600">
+              {storeInfo?.subscription_status === 'trial' ? 'Free Trial' : 
+               storeInfo?.subscription_status === 'active' ? 'Active Subscription' : 'Inactive'}
+            </p>
           </div>
           <button
             onClick={handleLogout}
@@ -321,98 +718,430 @@ const Dashboard = ({ onSelectList, onLogout }) => {
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="max-w-6xl mx-auto px-4 py-8">
-        <div className="flex justify-between items-center mb-8">
-          <h2 className="text-xl font-semibold text-gray-800">Your Lists</h2>
-          <button
-            onClick={() => setShowCreateModal(true)}
-            className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg font-medium transition duration-200"
-          >
-            + New List
-          </button>
-        </div>
-
-        {lists.length === 0 ? (
-          <div className="text-center py-16">
-            <div className="text-gray-400 text-6xl mb-4">📝</div>
-            <h3 className="text-xl font-semibold text-gray-600 mb-2">No lists yet</h3>
-            <p className="text-gray-500 mb-6">Create your first shopping list to get started</p>
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-lg font-medium transition duration-200"
-            >
-              Create Your First List
-            </button>
-          </div>
-        ) : (
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {lists.map((list) => (
-              <div
-                key={list.id}
-                onClick={() => onSelectList(list)}
-                className="bg-white rounded-xl shadow-sm border hover:shadow-md transition duration-200 cursor-pointer p-6"
+      {/* Navigation Tabs */}
+      <div className="max-w-7xl mx-auto px-4 py-4">
+        <div className="border-b border-gray-200">
+          <nav className="-mb-px flex space-x-8">
+            {['overview', 'products', 'subscription'].map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`py-2 px-1 border-b-2 font-medium text-sm capitalize ${
+                  activeTab === tab
+                    ? 'border-green-500 text-green-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                }`}
               >
-                <h3 className="text-lg font-semibold text-gray-800 mb-2">{list.name}</h3>
-                <p className="text-gray-500 text-sm mb-4">
-                  Created {new Date(list.created_at).toLocaleDateString()}
-                </p>
-                <div className="flex items-center text-sm text-gray-400">
-                  <span>👥 {list.shared_with.length + 1} member{list.shared_with.length === 0 ? '' : 's'}</span>
-                </div>
-              </div>
+                {tab}
+              </button>
             ))}
-          </div>
+          </nav>
+        </div>
+      </div>
+
+      {/* Content */}
+      <main className="max-w-7xl mx-auto px-4 py-8">
+        {activeTab === 'overview' && (
+          <StoreOverview storeInfo={storeInfo} subscription={subscription} products={products} />
+        )}
+        {activeTab === 'products' && (
+          <StoreProducts 
+            products={products} 
+            onProductsChange={fetchStoreData}
+            showAddProduct={showAddProduct}
+            setShowAddProduct={setShowAddProduct}
+          />
+        )}
+        {activeTab === 'subscription' && (
+          <StoreSubscription subscription={subscription} onSubscriptionChange={fetchStoreData} />
         )}
       </main>
+    </div>
+  );
+};
 
-      {/* Create List Modal */}
-      {showCreateModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl max-w-md w-full p-6">
-            <h3 className="text-xl font-semibold text-gray-800 mb-4">Create New List</h3>
-            <form onSubmit={createList}>
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  List Name
-                </label>
-                <input
-                  type="text"
-                  value={newListName}
-                  onChange={(e) => setNewListName(e.target.value)}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="e.g., Weekly Groceries"
-                  required
-                />
-              </div>
-              <div className="flex justify-end space-x-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowCreateModal(false);
-                    setNewListName('');
-                  }}
-                  className="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={creating}
-                  className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg font-medium transition duration-200 disabled:opacity-50"
-                >
-                  {creating ? 'Creating...' : 'Create List'}
-                </button>
-              </div>
-            </form>
+// Store Overview Component
+const StoreOverview = ({ storeInfo, subscription, products }) => {
+  return (
+    <div className="space-y-8">
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="bg-white rounded-xl shadow-sm border p-6">
+          <h3 className="text-lg font-semibold text-gray-800 mb-2">Products Listed</h3>
+          <p className="text-3xl font-bold text-green-500">{products.length}</p>
+        </div>
+        
+        <div className="bg-white rounded-xl shadow-sm border p-6">
+          <h3 className="text-lg font-semibold text-gray-800 mb-2">Subscription Status</h3>
+          <p className={`text-3xl font-bold capitalize ${
+            storeInfo?.subscription_status === 'active' ? 'text-green-500' :
+            storeInfo?.subscription_status === 'trial' ? 'text-blue-500' : 'text-red-500'
+          }`}>
+            {storeInfo?.subscription_status}
+          </p>
+        </div>
+        
+        <div className="bg-white rounded-xl shadow-sm border p-6">
+          <h3 className="text-lg font-semibold text-gray-800 mb-2">Monthly Plan</h3>
+          <p className="text-3xl font-bold text-gray-800">
+            {subscription ? `$${subscription.monthly_price}` : 'No Plan'}
+          </p>
+        </div>
+      </div>
+
+      {/* Store Info */}
+      <div className="bg-white rounded-xl shadow-sm border p-6">
+        <h2 className="text-xl font-semibold text-gray-800 mb-4">Store Information</h2>
+        <div className="grid md:grid-cols-2 gap-6">
+          <div>
+            <p className="text-gray-600 mb-2"><strong>Address:</strong> {storeInfo?.address}</p>
+            <p className="text-gray-600 mb-2"><strong>City:</strong> {storeInfo?.city}, {storeInfo?.state}</p>
+            <p className="text-gray-600 mb-2"><strong>ZIP:</strong> {storeInfo?.zip_code}</p>
+          </div>
+          <div>
+            <p className="text-gray-600 mb-2"><strong>Email:</strong> {storeInfo?.email}</p>
+            {storeInfo?.phone && (
+              <p className="text-gray-600 mb-2"><strong>Phone:</strong> {storeInfo.phone}</p>
+            )}
+            <p className="text-gray-600 mb-2">
+              <strong>Member since:</strong> {new Date(storeInfo?.created_at).toLocaleDateString()}
+            </p>
           </div>
         </div>
+      </div>
+    </div>
+  );
+};
+
+// Store Products Component
+const StoreProducts = ({ products, onProductsChange, showAddProduct, setShowAddProduct }) => {
+  return (
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <h2 className="text-2xl font-semibold text-gray-800">Your Products</h2>
+        <button
+          onClick={() => setShowAddProduct(true)}
+          className="bg-green-500 hover:bg-green-600 text-white px-6 py-2 rounded-lg font-medium transition duration-200"
+        >
+          + Add Product
+        </button>
+      </div>
+
+      {products.length === 0 ? (
+        <div className="text-center py-16 bg-white rounded-xl shadow-sm border">
+          <div className="text-gray-400 text-6xl mb-4">📦</div>
+          <h3 className="text-xl font-semibold text-gray-600 mb-2">No products yet</h3>
+          <p className="text-gray-500 mb-6">Add your first product to start advertising to local families</p>
+          <button
+            onClick={() => setShowAddProduct(true)}
+            className="bg-green-500 hover:bg-green-600 text-white px-6 py-3 rounded-lg font-medium transition duration-200"
+          >
+            Add Your First Product
+          </button>
+        </div>
+      ) : (
+        <div className="grid gap-4">
+          {products.map((product) => (
+            <div key={product.id} className="bg-white rounded-xl shadow-sm border p-6">
+              <div className="flex justify-between items-start">
+                <div className="flex-1">
+                  <h3 className="text-lg font-semibold text-gray-800">{product.name}</h3>
+                  <p className="text-gray-600 mb-2">{product.category}</p>
+                  <p className="text-2xl font-bold text-green-500">${product.price.toFixed(2)}</p>
+                  {product.description && (
+                    <p className="text-gray-500 mt-2">{product.description}</p>
+                  )}
+                </div>
+                <div className="flex items-center space-x-4">
+                  <span className={`px-3 py-1 rounded-full text-sm ${
+                    product.is_advertised 
+                      ? 'bg-green-100 text-green-800' 
+                      : 'bg-gray-100 text-gray-800'
+                  }`}>
+                    {product.is_advertised ? 'Advertised' : 'Not Advertised'}
+                  </span>
+                  <button className="text-gray-400 hover:text-red-500">
+                    🗑️
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Add Product Modal */}
+      {showAddProduct && (
+        <AddProductModal 
+          onClose={() => setShowAddProduct(false)}
+          onProductAdded={onProductsChange}
+        />
       )}
     </div>
   );
 };
 
-// Shopping List View Component
+// Add Product Modal Component
+const AddProductModal = ({ onClose, onProductAdded }) => {
+  const [formData, setFormData] = useState({
+    name: '',
+    category: '',
+    price: '',
+    description: '',
+    is_advertised: true
+  });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleInputChange = (e) => {
+    const value = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+    setFormData({
+      ...formData,
+      [e.target.name]: value
+    });
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+
+    try {
+      await apiCall('/api/store/products', {
+        method: 'POST',
+        body: {
+          ...formData,
+          price: parseFloat(formData.price)
+        }
+      });
+
+      onProductAdded();
+      onClose();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+      <div className="bg-white rounded-xl max-w-md w-full p-6">
+        <h3 className="text-xl font-semibold text-gray-800 mb-4">Add New Product</h3>
+        
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Product Name
+            </label>
+            <input
+              type="text"
+              name="name"
+              value={formData.name}
+              onChange={handleInputChange}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              placeholder="e.g., Organic Bananas"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Category
+            </label>
+            <input
+              type="text"
+              name="category"
+              value={formData.category}
+              onChange={handleInputChange}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              placeholder="e.g., Produce, Dairy, Meat"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Price ($)
+            </label>
+            <input
+              type="number"
+              step="0.01"
+              name="price"
+              value={formData.price}
+              onChange={handleInputChange}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              placeholder="0.00"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Description (Optional)
+            </label>
+            <textarea
+              name="description"
+              value={formData.description}
+              onChange={handleInputChange}
+              rows="3"
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              placeholder="Additional product details..."
+            />
+          </div>
+
+          <div className="flex items-center">
+            <input
+              type="checkbox"
+              name="is_advertised"
+              checked={formData.is_advertised}
+              onChange={handleInputChange}
+              className="h-4 w-4 text-green-500 focus:ring-green-500 border-gray-300 rounded"
+            />
+            <label className="ml-2 block text-sm text-gray-700">
+              Advertise this product to local families
+            </label>
+          </div>
+
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+              {error}
+            </div>
+          )}
+
+          <div className="flex justify-end space-x-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={loading}
+              className="bg-green-500 hover:bg-green-600 text-white px-6 py-2 rounded-lg font-medium transition duration-200 disabled:opacity-50"
+            >
+              {loading ? 'Adding...' : 'Add Product'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+// Store Subscription Component
+const StoreSubscription = ({ subscription, onSubscriptionChange }) => {
+  const [loading, setLoading] = useState(false);
+
+  const handleSubscribe = async (plan) => {
+    setLoading(true);
+    try {
+      await apiCall('/api/store/subscription', {
+        method: 'POST',
+        body: { plan }
+      });
+      onSubscriptionChange();
+    } catch (err) {
+      console.error('Subscription failed:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (subscription) {
+    return (
+      <div className="bg-white rounded-xl shadow-sm border p-6">
+        <h2 className="text-xl font-semibold text-gray-800 mb-4">Current Subscription</h2>
+        <div className="space-y-4">
+          <p><strong>Plan:</strong> {subscription.plan} Plan</p>
+          <p><strong>Status:</strong> {subscription.status}</p>
+          <p><strong>Monthly Price:</strong> ${subscription.monthly_price}</p>
+          <p><strong>Expires:</strong> {new Date(subscription.end_date).toLocaleDateString()}</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <h2 className="text-2xl font-semibold text-gray-800">Choose Your Plan</h2>
+      
+      <div className="grid md:grid-cols-2 gap-6">
+        {/* Monthly Plan */}
+        <div className="bg-white rounded-xl shadow-sm border p-6">
+          <h3 className="text-xl font-semibold text-gray-800 mb-4">Monthly Plan</h3>
+          <p className="text-3xl font-bold text-gray-800 mb-4">$99.99<span className="text-lg font-normal">/month</span></p>
+          <ul className="space-y-2 mb-6">
+            <li className="flex items-center text-gray-700">
+              <span className="text-green-500 mr-2">✓</span>
+              Unlimited product listings
+            </li>
+            <li className="flex items-center text-gray-700">
+              <span className="text-green-500 mr-2">✓</span>
+              Local family advertising
+            </li>
+            <li className="flex items-center text-gray-700">
+              <span className="text-green-500 mr-2">✓</span>
+              Analytics dashboard
+            </li>
+            <li className="flex items-center text-gray-700">
+              <span className="text-green-500 mr-2">✓</span>
+              Customer insights
+            </li>
+          </ul>
+          <button
+            onClick={() => handleSubscribe('monthly')}
+            disabled={loading}
+            className="w-full bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 px-4 rounded-lg transition duration-200 disabled:opacity-50"
+          >
+            {loading ? 'Processing...' : 'Choose Monthly'}
+          </button>
+        </div>
+
+        {/* Yearly Plan */}
+        <div className="bg-white rounded-xl shadow-sm border p-6 ring-2 ring-green-500">
+          <div className="text-center">
+            <span className="bg-green-500 text-white px-3 py-1 rounded-full text-sm font-medium">BEST VALUE</span>
+          </div>
+          <h3 className="text-xl font-semibold text-gray-800 mb-4 mt-4">Yearly Plan</h3>
+          <p className="text-3xl font-bold text-gray-800 mb-4">
+            $79.99<span className="text-lg font-normal">/month</span>
+            <span className="block text-sm text-gray-500">Billed annually ($959.88)</span>
+          </p>
+          <ul className="space-y-2 mb-6">
+            <li className="flex items-center text-gray-700">
+              <span className="text-green-500 mr-2">✓</span>
+              Everything in Monthly Plan
+            </li>
+            <li className="flex items-center text-gray-700">
+              <span className="text-green-500 mr-2">✓</span>
+              20% savings vs monthly
+            </li>
+            <li className="flex items-center text-gray-700">
+              <span className="text-green-500 mr-2">✓</span>
+              Priority customer support
+            </li>
+            <li className="flex items-center text-gray-700">
+              <span className="text-green-500 mr-2">✓</span>
+              Advanced analytics
+            </li>
+          </ul>
+          <button
+            onClick={() => handleSubscribe('yearly')}
+            disabled={loading}
+            className="w-full bg-green-500 hover:bg-green-600 text-white font-semibold py-3 px-4 rounded-lg transition duration-200 disabled:opacity-50"
+          >
+            {loading ? 'Processing...' : 'Choose Yearly'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Enhanced Shopping List View with Store Prices
 const ShoppingListView = ({ list, onBack }) => {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -421,6 +1150,8 @@ const ShoppingListView = ({ list, onBack }) => {
   const [shareEmail, setShareEmail] = useState('');
   const [sharing, setSharing] = useState(false);
   const [refreshInterval, setRefreshInterval] = useState(null);
+  const [showPrices, setShowPrices] = useState(false);
+  const [storePrices, setStorePrices] = useState({});
 
   useEffect(() => {
     fetchItems();
@@ -445,6 +1176,18 @@ const ShoppingListView = ({ list, onBack }) => {
     }
   };
 
+  const fetchStorePrices = async (itemName) => {
+    try {
+      const prices = await apiCall(`/api/products/search?query=${encodeURIComponent(itemName)}&limit=3`);
+      setStorePrices(prev => ({
+        ...prev,
+        [itemName]: prices
+      }));
+    } catch (err) {
+      console.error('Failed to fetch store prices:', err);
+    }
+  };
+
   const addItem = async (e) => {
     e.preventDefault();
     if (!newItemName.trim()) return;
@@ -457,6 +1200,11 @@ const ShoppingListView = ({ list, onBack }) => {
 
       setNewItemName('');
       fetchItems(); // Refresh immediately after adding
+      
+      // Fetch store prices for the new item
+      if (showPrices) {
+        fetchStorePrices(newItemName.trim());
+      }
     } catch (err) {
       console.error('Failed to add item:', err);
     }
@@ -507,6 +1255,20 @@ const ShoppingListView = ({ list, onBack }) => {
     }
   };
 
+  const toggleStorePrices = () => {
+    const newShowPrices = !showPrices;
+    setShowPrices(newShowPrices);
+    
+    if (newShowPrices) {
+      // Fetch prices for all items
+      items.forEach(item => {
+        if (!item.is_purchased) {
+          fetchStorePrices(item.name);
+        }
+      });
+    }
+  };
+
   const remainingItems = items.filter(item => !item.is_purchased);
   const purchasedItems = items.filter(item => item.is_purchased);
 
@@ -541,12 +1303,24 @@ const ShoppingListView = ({ list, onBack }) => {
                 </p>
               </div>
             </div>
-            <button
-              onClick={() => setShowShareModal(true)}
-              className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg font-medium transition duration-200"
-            >
-              Share List
-            </button>
+            <div className="flex space-x-3">
+              <button
+                onClick={toggleStorePrices}
+                className={`px-4 py-2 rounded-lg font-medium transition duration-200 ${
+                  showPrices 
+                    ? 'bg-green-500 hover:bg-green-600 text-white' 
+                    : 'bg-gray-200 hover:bg-gray-300 text-gray-700'
+                }`}
+              >
+                {showPrices ? '💰 Prices On' : '💰 Show Prices'}
+              </button>
+              <button
+                onClick={() => setShowShareModal(true)}
+                className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg font-medium transition duration-200"
+              >
+                Share List
+              </button>
+            </div>
           </div>
         </div>
       </header>
@@ -582,23 +1356,40 @@ const ShoppingListView = ({ list, onBack }) => {
               </div>
               <div className="divide-y">
                 {remainingItems.map((item) => (
-                  <div key={item.id} className="p-4 flex items-center justify-between hover:bg-gray-50">
-                    <div className="flex items-center space-x-3">
-                      <button
-                        onClick={() => toggleItem(item.id, item.is_purchased)}
-                        className="w-6 h-6 rounded-full border-2 border-gray-300 hover:border-blue-500 transition duration-200"
-                      />
-                      <div>
-                        <p className="font-medium text-gray-800">{item.name}</p>
-                        <p className="text-sm text-gray-500">Qty: {item.quantity}</p>
+                  <div key={item.id} className="p-4">
+                    <div className="flex items-center justify-between hover:bg-gray-50">
+                      <div className="flex items-center space-x-3">
+                        <button
+                          onClick={() => toggleItem(item.id, item.is_purchased)}
+                          className="w-6 h-6 rounded-full border-2 border-gray-300 hover:border-blue-500 transition duration-200"
+                        />
+                        <div>
+                          <p className="font-medium text-gray-800">{item.name}</p>
+                          <p className="text-sm text-gray-500">Qty: {item.quantity}</p>
+                        </div>
                       </div>
+                      <button
+                        onClick={() => deleteItem(item.id)}
+                        className="text-gray-400 hover:text-red-500 transition duration-200"
+                      >
+                        🗑️
+                      </button>
                     </div>
-                    <button
-                      onClick={() => deleteItem(item.id)}
-                      className="text-gray-400 hover:text-red-500 transition duration-200"
-                    >
-                      🗑️
-                    </button>
+                    
+                    {/* Store Prices */}
+                    {showPrices && storePrices[item.name] && (
+                      <div className="mt-3 ml-9 bg-gray-50 rounded-lg p-3">
+                        <p className="text-sm font-medium text-gray-700 mb-2">Local Store Prices:</p>
+                        <div className="space-y-1">
+                          {storePrices[item.name].slice(0, 3).map((result, index) => (
+                            <div key={index} className="flex justify-between items-center text-sm">
+                              <span className="text-gray-600">{result.store.store_name}</span>
+                              <span className="font-medium text-green-600">${result.product.price.toFixed(2)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -695,29 +1486,224 @@ const ShoppingListView = ({ list, onBack }) => {
   );
 };
 
+// Household Dashboard Component (existing, but updated with price integration)
+const HouseholdDashboard = ({ onSelectList, onLogout }) => {
+  const [lists, setLists] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [newListName, setNewListName] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [user, setUser] = useState(null);
+
+  useEffect(() => {
+    fetchUserInfo();
+    fetchLists();
+  }, []);
+
+  const fetchUserInfo = async () => {
+    try {
+      const userData = await apiCall('/api/auth/me');
+      setUser(userData);
+    } catch (err) {
+      console.error('Failed to fetch user info:', err);
+    }
+  };
+
+  const fetchLists = async () => {
+    try {
+      const listsData = await apiCall('/api/lists');
+      setLists(listsData);
+    } catch (err) {
+      console.error('Failed to fetch lists:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const createList = async (e) => {
+    e.preventDefault();
+    setCreating(true);
+
+    try {
+      await apiCall('/api/lists', {
+        method: 'POST',
+        body: { name: newListName },
+      });
+
+      setNewListName('');
+      setShowCreateModal(false);
+      fetchLists();
+    } catch (err) {
+      console.error('Failed to create list:', err);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('userType');
+    onLogout();
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading your shopping lists...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <header className="bg-white shadow-sm border-b">
+        <div className="max-w-6xl mx-auto px-4 py-4 flex justify-between items-center">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-800">ShopSync</h1>
+            {user && <p className="text-gray-600">Welcome back, {user.name}!</p>}
+          </div>
+          <button
+            onClick={handleLogout}
+            className="text-gray-600 hover:text-gray-800 font-medium"
+          >
+            Logout
+          </button>
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <main className="max-w-6xl mx-auto px-4 py-8">
+        <div className="flex justify-between items-center mb-8">
+          <h2 className="text-xl font-semibold text-gray-800">Your Shopping Lists</h2>
+          <button
+            onClick={() => setShowCreateModal(true)}
+            className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg font-medium transition duration-200"
+          >
+            + New List
+          </button>
+        </div>
+
+        {lists.length === 0 ? (
+          <div className="text-center py-16">
+            <div className="text-gray-400 text-6xl mb-4">📝</div>
+            <h3 className="text-xl font-semibold text-gray-600 mb-2">No lists yet</h3>
+            <p className="text-gray-500 mb-6">Create your first shopping list to get started</p>
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-lg font-medium transition duration-200"
+            >
+              Create Your First List
+            </button>
+          </div>
+        ) : (
+          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+            {lists.map((list) => (
+              <div
+                key={list.id}
+                onClick={() => onSelectList(list)}
+                className="bg-white rounded-xl shadow-sm border hover:shadow-md transition duration-200 cursor-pointer p-6"
+              >
+                <h3 className="text-lg font-semibold text-gray-800 mb-2">{list.name}</h3>
+                <p className="text-gray-500 text-sm mb-4">
+                  Created {new Date(list.created_at).toLocaleDateString()}
+                </p>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-gray-400">
+                    👥 {list.shared_with.length + 1} member{list.shared_with.length === 0 ? '' : 's'}
+                  </span>
+                  <span className="text-sm text-blue-500 font-medium">
+                    💰 Prices available
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </main>
+
+      {/* Create List Modal */}
+      {showCreateModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl max-w-md w-full p-6">
+            <h3 className="text-xl font-semibold text-gray-800 mb-4">Create New List</h3>
+            <form onSubmit={createList}>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  List Name
+                </label>
+                <input
+                  type="text"
+                  value={newListName}
+                  onChange={(e) => setNewListName(e.target.value)}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="e.g., Weekly Groceries"
+                  required
+                />
+              </div>
+              <div className="flex justify-end space-x-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowCreateModal(false);
+                    setNewListName('');
+                  }}
+                  className="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={creating}
+                  className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg font-medium transition duration-200 disabled:opacity-50"
+                >
+                  {creating ? 'Creating...' : 'Create List'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // Main App Component
 function App() {
+  const [currentView, setCurrentView] = useState('landing'); // landing, household, store
+  const [authState, setAuthState] = useState('login'); // login, register
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [showRegister, setShowRegister] = useState(false);
+  const [userType, setUserType] = useState(null);
   const [selectedList, setSelectedList] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     // Check if user is already logged in
     const token = localStorage.getItem('token');
-    if (token) {
+    const savedUserType = localStorage.getItem('userType');
+    
+    if (token && savedUserType) {
       setIsAuthenticated(true);
+      setUserType(savedUserType);
+      setCurrentView(savedUserType);
     }
     setLoading(false);
   }, []);
 
-  const handleAuthSuccess = () => {
+  const handleAuthSuccess = (type) => {
     setIsAuthenticated(true);
+    setUserType(type);
+    setCurrentView(type);
   };
 
   const handleLogout = () => {
     setIsAuthenticated(false);
+    setUserType(null);
     setSelectedList(null);
+    setCurrentView('landing');
   };
 
   const handleSelectList = (list) => {
@@ -736,35 +1722,74 @@ function App() {
     );
   }
 
+  // Show appropriate view based on authentication and user type
   if (!isAuthenticated) {
-    return showRegister ? (
-      <Register
-        onRegisterSuccess={handleAuthSuccess}
-        switchToLogin={() => setShowRegister(false)}
-      />
-    ) : (
-      <Login
-        onLoginSuccess={handleAuthSuccess}
-        switchToRegister={() => setShowRegister(true)}
-      />
-    );
+    if (currentView === 'landing') {
+      return (
+        <LandingPage 
+          onHouseholdLogin={() => setCurrentView('household-login')}
+          onStoreLogin={() => setCurrentView('store-login')}
+        />
+      );
+    }
+
+    if (currentView === 'household-login') {
+      return authState === 'login' ? (
+        <HouseholdLogin
+          onLoginSuccess={handleAuthSuccess}
+          switchToRegister={() => setAuthState('register')}
+          onBack={() => setCurrentView('landing')}
+        />
+      ) : (
+        <HouseholdRegister
+          onRegisterSuccess={handleAuthSuccess}
+          switchToLogin={() => setAuthState('login')}
+          onBack={() => setCurrentView('landing')}
+        />
+      );
+    }
+
+    if (currentView === 'store-login') {
+      return authState === 'login' ? (
+        <StoreLogin
+          onLoginSuccess={handleAuthSuccess}
+          switchToRegister={() => setAuthState('register')}
+          onBack={() => setCurrentView('landing')}
+        />
+      ) : (
+        <StoreRegister
+          onRegisterSuccess={handleAuthSuccess}
+          switchToLogin={() => setAuthState('login')}
+          onBack={() => setCurrentView('landing')}
+        />
+      );
+    }
   }
 
-  if (selectedList) {
+  // Authenticated views
+  if (userType === 'store') {
+    return <StoreDashboard onLogout={handleLogout} />;
+  }
+
+  if (userType === 'household') {
+    if (selectedList) {
+      return (
+        <ShoppingListView
+          list={selectedList}
+          onBack={handleBackToDashboard}
+        />
+      );
+    }
+
     return (
-      <ShoppingListView
-        list={selectedList}
-        onBack={handleBackToDashboard}
+      <HouseholdDashboard
+        onSelectList={handleSelectList}
+        onLogout={handleLogout}
       />
     );
   }
 
-  return (
-    <Dashboard
-      onSelectList={handleSelectList}
-      onLogout={handleLogout}
-    />
-  );
+  return <LandingPage onHouseholdLogin={() => setCurrentView('household-login')} onStoreLogin={() => setCurrentView('store-login')} />;
 }
 
 export default App;
