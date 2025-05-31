@@ -415,29 +415,17 @@ class ShoppingListAPITester:
         
         return success, response
 
-    def get_local_stores(self, zip_code=None, city=None, state=None):
-        """Get local stores"""
-        endpoint = "/api/stores/local"
-        params = []
-        
-        if zip_code:
-            params.append(f"zip_code={zip_code}")
-        if city:
-            params.append(f"city={city}")
-        if state:
-            params.append(f"state={state}")
-            
-        if params:
-            endpoint += "?" + "&".join(params)
-            
-        success, response = self.run_test(
-            "Get Local Stores",
+    def test_unauthorized_access(self):
+        """Test accessing protected endpoint without token"""
+        success, _ = self.run_test(
+            "Unauthorized Access",
             "GET",
-            endpoint,
-            200
+            "/api/lists",
+            401,
+            headers={'Content-Type': 'application/json'}
         )
         
-        return success, response
+        return success
 
     def run_all_tests(self):
         """Run all API tests"""
