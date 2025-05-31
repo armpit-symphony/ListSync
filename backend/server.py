@@ -324,6 +324,180 @@ def create_default_admin():
 # Create default admin on startup
 create_default_admin()
 
+# Email configuration
+def get_mail_config():
+    """Configure email settings - can be made configurable via admin panel"""
+    conf = ConnectionConfig(
+        MAIL_USERNAME=os.getenv('MAIL_USERNAME', 'noreply@shopsync.com'),
+        MAIL_PASSWORD=os.getenv('MAIL_PASSWORD', ''),
+        MAIL_FROM=os.getenv('MAIL_FROM', 'noreply@shopsync.com'),
+        MAIL_PORT=587,
+        MAIL_SERVER=os.getenv('MAIL_SERVER', 'smtp.gmail.com'),
+        MAIL_STARTTLS=True,
+        MAIL_SSL_TLS=False,
+        USE_CREDENTIALS=True,
+        VALIDATE_CERTS=True
+    )
+    return FastMail(conf)
+
+# Email templates
+WELCOME_EMAIL_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+        .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
+        .button { background: #4F46E5; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0; }
+        .footer { text-align: center; margin-top: 30px; color: #666; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎉 Welcome to ShopSync!</h1>
+            <p>Your shared shopping list platform</p>
+        </div>
+        <div class="content">
+            <h2>Hi {{name}}!</h2>
+            <p>Welcome to ShopSync - the shared shopping list platform connecting households with local grocery stores.</p>
+            
+            {% if user_type == 'household' %}
+            <p><strong>You can now:</strong></p>
+            <ul>
+                <li>✅ Create shared shopping lists with your family</li>
+                <li>✅ See real-time updates when others add items</li>
+                <li>✅ View local store prices for your items</li>
+                <li>✅ Never forget items again!</li>
+            </ul>
+            {% elif user_type == 'store' %}
+            <p><strong>Your 7-day free trial has started!</strong></p>
+            <ul>
+                <li>✅ Add your products and prices</li>
+                <li>✅ Advertise to local families</li>
+                <li>✅ Increase foot traffic to your store</li>
+                <li>✅ Only $12/month after trial</li>
+            </ul>
+            {% endif %}
+            
+            <a href="{{app_url}}" class="button">Get Started Now</a>
+            
+            <p>If you have any questions, just reply to this email - we're here to help!</p>
+            
+            <p>Best regards,<br>The ShopSync Team</p>
+        </div>
+        <div class="footer">
+            <p>© 2025 ShopSync. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+SUBSCRIPTION_CONFIRMATION_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: #10B981; color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+        .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
+        .receipt { background: white; padding: 20px; border-radius: 5px; margin: 20px 0; }
+        .footer { text-align: center; margin-top: 30px; color: #666; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎊 Subscription Confirmed!</h1>
+            <p>Thank you for choosing ShopSync</p>
+        </div>
+        <div class="content">
+            <h2>Hi {{store_name}}!</h2>
+            <p>Your subscription to ShopSync has been successfully activated!</p>
+            
+            <div class="receipt">
+                <h3>Subscription Details:</h3>
+                <p><strong>Plan:</strong> {{plan}} Plan</p>
+                <p><strong>Price:</strong> ${{price}}/{{interval}}</p>
+                <p><strong>Start Date:</strong> {{start_date}}</p>
+                <p><strong>Next Billing:</strong> {{next_billing}}</p>
+            </div>
+            
+            <p><strong>What's Next?</strong></p>
+            <ul>
+                <li>✅ Add your products and prices</li>
+                <li>✅ Start advertising to local families</li>
+                <li>✅ Monitor your performance in the dashboard</li>
+                <li>✅ Increase your store's visibility</li>
+            </ul>
+            
+            <p>Your products will now be visible to households in your area when they create shopping lists!</p>
+            
+            <p>Best regards,<br>The ShopSync Team</p>
+        </div>
+        <div class="footer">
+            <p>© 2025 ShopSync. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+async def send_welcome_email(name: str, email: str, user_type: str):
+    """Send welcome email to new users"""
+    try:
+        fastmail = get_mail_config()
+        
+        template = Template(WELCOME_EMAIL_TEMPLATE)
+        html_content = template.render(
+            name=name,
+            user_type=user_type,
+            app_url=os.getenv('REACT_APP_FRONTEND_URL', 'http://localhost:3000')
+        )
+        
+        message = MessageSchema(
+            subject=f"🎉 Welcome to ShopSync, {name}!",
+            recipients=[email],
+            body=html_content,
+            subtype="html"
+        )
+        
+        await fastmail.send_message(message)
+        print(f"Welcome email sent to {email}")
+    except Exception as e:
+        print(f"Failed to send welcome email to {email}: {str(e)}")
+
+async def send_subscription_confirmation(store_name: str, email: str, plan: str, price: float, start_date: datetime):
+    """Send subscription confirmation email"""
+    try:
+        fastmail = get_mail_config()
+        
+        template = Template(SUBSCRIPTION_CONFIRMATION_TEMPLATE)
+        html_content = template.render(
+            store_name=store_name,
+            plan=plan.title(),
+            price=price,
+            interval="month" if plan == "monthly" else "year",
+            start_date=start_date.strftime("%B %d, %Y"),
+            next_billing=(start_date + timedelta(days=30 if plan == "monthly" else 365)).strftime("%B %d, %Y")
+        )
+        
+        message = MessageSchema(
+            subject=f"🎊 Subscription Confirmed - {store_name}",
+            recipients=[email],
+            body=html_content,
+            subtype="html"
+        )
+        
+        await fastmail.send_message(message)
+        print(f"Subscription confirmation sent to {email}")
+    except Exception as e:
+        print(f"Failed to send subscription confirmation to {email}: {str(e)}")
+
 # Admin Auth endpoints
 @app.post("/api/admin/auth/register", response_model=Token)
 async def register_admin(admin_data: AdminUserCreate, current_admin = Depends(get_current_admin_user)):
