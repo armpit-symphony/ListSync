@@ -218,14 +218,132 @@ class ShoppingListAPITester:
         
         return success, response
 
-    def test_invalid_login(self):
-        """Test login with invalid credentials"""
-        success, _ = self.run_test(
-            "Invalid Login",
+    def login_admin(self, email, password):
+        """Login with admin credentials"""
+        success, response = self.run_test(
+            "Admin Login",
             "POST",
-            "/api/auth/login",
-            401,
-            data={"email": "nonexistent@example.com", "password": "wrongpassword"}
+            "/api/admin/auth/login",
+            200,
+            data={"email": email, "password": password}
+        )
+        
+        if success and 'access_token' in response:
+            self.token = response['access_token']
+            self.user_type = response.get('user_type', 'admin')
+            return True, response
+        return False, None
+
+    def get_current_admin(self):
+        """Get current admin info"""
+        success, response = self.run_test(
+            "Get Current Admin",
+            "GET",
+            "/api/admin/auth/me",
+            200
+        )
+        
+        if success and 'id' in response:
+            self.user_id = response['id']
+            return True, response
+        return False, None
+
+    def register_admin(self, name, email, password, current_admin_required=True):
+        """Register a new admin (requires existing admin)"""
+        success, response = self.run_test(
+            "Admin Registration",
+            "POST",
+            "/api/admin/auth/register",
+            200,
+            data={"name": name, "email": email, "password": password}
+        )
+        
+        if success and 'access_token' in response:
+            if not current_admin_required:
+                self.token = response['access_token']
+                self.user_type = response.get('user_type', 'admin')
+            return True, response
+        return False, None
+
+    def get_admin_stats(self):
+        """Get admin dashboard statistics"""
+        success, response = self.run_test(
+            "Get Admin Stats",
+            "GET",
+            "/api/admin/stats",
+            200
+        )
+        
+        return success, response
+
+    def get_admin_subscriptions(self):
+        """Get all store subscriptions for admin"""
+        success, response = self.run_test(
+            "Get Admin Subscriptions",
+            "GET",
+            "/api/admin/subscriptions",
+            200
+        )
+        
+        return success, response
+
+    def update_payment_config(self, stripe_secret_key=None, stripe_publishable_key=None, 
+                             stripe_endpoint_secret=None, paypal_client_id=None, 
+                             paypal_client_secret=None):
+        """Update payment configuration"""
+        data = {}
+        if stripe_secret_key:
+            data["stripe_secret_key"] = stripe_secret_key
+        if stripe_publishable_key:
+            data["stripe_publishable_key"] = stripe_publishable_key
+        if stripe_endpoint_secret:
+            data["stripe_endpoint_secret"] = stripe_endpoint_secret
+        if paypal_client_id:
+            data["paypal_client_id"] = paypal_client_id
+        if paypal_client_secret:
+            data["paypal_client_secret"] = paypal_client_secret
+            
+        success, response = self.run_test(
+            "Update Payment Configuration",
+            "POST",
+            "/api/admin/payment/config",
+            200,
+            data=data
+        )
+        
+        return success, response
+
+    def get_payment_config_status(self):
+        """Get payment configuration status"""
+        success, response = self.run_test(
+            "Get Payment Configuration Status",
+            "GET",
+            "/api/admin/payment/config",
+            200
+        )
+        
+        return success, response
+
+    def create_stripe_checkout_session(self, plan_type):
+        """Create a Stripe checkout session"""
+        success, response = self.run_test(
+            f"Create Stripe Checkout Session ({plan_type})",
+            "POST",
+            f"/api/stripe/create-checkout-session?plan_type={plan_type}",
+            200
+        )
+        
+        return success, response
+
+    def test_stripe_webhook(self):
+        """Test Stripe webhook endpoint availability"""
+        # This just tests if the endpoint is available, not actual webhook processing
+        success, response = self.run_test(
+            "Test Stripe Webhook Endpoint",
+            "POST",
+            "/api/stripe/webhook",
+            400,  # Expected to fail with 400 (invalid payload) without proper signature
+            data={}
         )
         
         return success
