@@ -74,6 +74,7 @@ class ShoppingListAPITester:
         
         if success and 'access_token' in response:
             self.token = response['access_token']
+            self.user_type = response.get('user_type', 'household')
             self.test_users.append({"email": email, "password": password})
             return True
         return False
@@ -90,6 +91,7 @@ class ShoppingListAPITester:
         
         if success and 'access_token' in response:
             self.token = response['access_token']
+            self.user_type = response.get('user_type', 'household')
             return True
         return False
 
@@ -450,6 +452,10 @@ class ShoppingListAPITester:
         )
         
         return success
+
+    def run_all_tests(self):
+        """Run all API tests"""
+        # Generate unique test data
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         test_user1 = {
             "name": f"Test User 1 {timestamp}",
@@ -461,8 +467,19 @@ class ShoppingListAPITester:
             "email": f"testuser2_{timestamp}@example.com",
             "password": "TestPassword123!"
         }
+        test_store = {
+            "store_name": f"Test Store {timestamp}",
+            "email": f"teststore_{timestamp}@example.com",
+            "password": "StorePass123!",
+            "address": "123 Main St",
+            "city": "Testville",
+            "state": "TS",
+            "zip_code": "12345",
+            "phone": "555-123-4567"
+        }
         
         print("\n===== STARTING API TESTS =====\n")
+        print("\n----- HOUSEHOLD USER TESTS -----\n")
         
         # Test 1: Register first user
         if not self.register_user(test_user1["name"], test_user1["email"], test_user1["password"]):
@@ -598,23 +615,239 @@ class ShoppingListAPITester:
             print("❌ Delete list failed, stopping tests")
             return False
         
-        # Test 17: Test invalid login
+        print("\n----- STORE USER TESTS -----\n")
+        
+        # Test 17: Register a store
+        store_reg_success, store_reg_data = self.register_store(
+            test_store["store_name"],
+            test_store["email"],
+            test_store["password"],
+            test_store["address"],
+            test_store["city"],
+            test_store["state"],
+            test_store["zip_code"],
+            test_store["phone"]
+        )
+        
+        if not store_reg_success:
+            print("❌ Store registration failed, stopping tests")
+            return False
+        
+        # Test 18: Get store info
+        store_info_success, store_info_data = self.get_current_store()
+        if not store_info_success:
+            print("❌ Get store info failed, stopping tests")
+            return False
+        
+        # Verify trial status
+        if store_info_data.get("subscription_status") != "trial":
+            print(f"❌ Expected trial status, got {store_info_data.get('subscription_status')}")
+            self.tests_run += 1
+        else:
+            print("✅ Store has trial status as expected")
+            self.tests_run += 1
+            self.tests_passed += 1
+        
+        # Test 19: Add products
+        product1_success, product1_data = self.add_product(
+            f"Test Product 1 {timestamp}",
+            "Produce",
+            2.99,
+            "Fresh organic product"
+        )
+        
+        if not product1_success:
+            print("❌ Add product failed, stopping tests")
+            return False
+        
+        product2_success, product2_data = self.add_product(
+            f"Test Product 2 {timestamp}",
+            "Dairy",
+            4.99,
+            "Organic dairy product",
+            False  # Not advertised
+        )
+        
+        if not product2_success:
+            print("❌ Add second product failed, stopping tests")
+            return False
+        
+        # Test 20: Get store products
+        products_success, products_data = self.get_store_products()
+        if not products_success:
+            print("❌ Get store products failed, stopping tests")
+            return False
+        
+        if len(products_data) != 2:
+            print(f"❌ Expected 2 products, got {len(products_data)}")
+            self.tests_run += 1
+        else:
+            print("✅ Store has 2 products as expected")
+            self.tests_run += 1
+            self.tests_passed += 1
+        
+        # Test 21: Update product
+        update_product_success, update_product_data = self.update_product(
+            product1_data["id"],
+            product1_data["name"],
+            product1_data["category"],
+            3.49,  # Updated price
+            product1_data["description"],
+            product1_data["is_advertised"]
+        )
+        
+        if not update_product_success:
+            print("❌ Update product failed, stopping tests")
+            return False
+        
+        if update_product_data["price"] != 3.49:
+            print(f"❌ Expected updated price 3.49, got {update_product_data['price']}")
+            self.tests_run += 1
+        else:
+            print("✅ Product price updated successfully")
+            self.tests_run += 1
+            self.tests_passed += 1
+        
+        # Test 22: Create subscription
+        subscription_success, subscription_data = self.create_subscription("monthly")
+        if not subscription_success:
+            print("❌ Create subscription failed, stopping tests")
+            return False
+        
+        # Test 23: Get subscription
+        get_sub_success, get_sub_data = self.get_subscription()
+        if not get_sub_success:
+            print("❌ Get subscription failed, stopping tests")
+            return False
+        
+        if get_sub_data["plan"] != "monthly" or get_sub_data["monthly_price"] != 99.99:
+            print(f"❌ Unexpected subscription data: {get_sub_data}")
+            self.tests_run += 1
+        else:
+            print("✅ Subscription data is correct")
+            self.tests_run += 1
+            self.tests_passed += 1
+        
+        # Test 24: Delete product
+        delete_product_success, _ = self.delete_product(product2_data["id"])
+        if not delete_product_success:
+            print("❌ Delete product failed, stopping tests")
+            return False
+        
+        # Test 25: Public product search (should only find advertised products)
+        # First, clear token to test as unauthenticated user
+        store_token = self.token
+        self.token = None
+        
+        search_success, search_results = self.search_products(timestamp)
+        if not search_success:
+            print("❌ Product search failed, stopping tests")
+            return False
+        
+        # Should only find the advertised product
+        advertised_found = False
+        non_advertised_found = False
+        
+        for result in search_results:
+            if result["product"]["id"] == product1_data["id"]:
+                advertised_found = True
+            if result["product"]["id"] == product2_data["id"]:
+                non_advertised_found = True
+        
+        if not advertised_found:
+            print("❌ Advertised product not found in search results")
+            self.tests_run += 1
+        else:
+            print("✅ Advertised product found in search results")
+            self.tests_run += 1
+            self.tests_passed += 1
+        
+        if non_advertised_found:
+            print("❌ Non-advertised product found in search results")
+            self.tests_run += 1
+        else:
+            print("✅ Non-advertised product correctly excluded from search results")
+            self.tests_run += 1
+            self.tests_passed += 1
+        
+        # Test 26: Get product categories
+        categories_success, categories_data = self.get_product_categories()
+        if not categories_success:
+            print("❌ Get product categories failed, stopping tests")
+            return False
+        
+        # Test 27: Get local stores
+        local_stores_success, local_stores_data = self.get_local_stores(city="Testville", state="TS")
+        if not local_stores_success:
+            print("❌ Get local stores failed, stopping tests")
+            return False
+        
+        store_found = False
+        for store in local_stores_data:
+            if store["id"] == store_info_data["id"]:
+                store_found = True
+                break
+        
+        if not store_found:
+            print("❌ Store not found in local stores search")
+            self.tests_run += 1
+        else:
+            print("✅ Store found in local stores search")
+            self.tests_run += 1
+            self.tests_passed += 1
+        
+        # Test 28: Test invalid login
         invalid_login_success = self.test_invalid_login()
         if not invalid_login_success:
             print("❌ Invalid login test failed")
         
-        # Test 18: Test duplicate registration
+        # Test 29: Test duplicate registration
         duplicate_reg_success = self.test_duplicate_registration(
             test_user1["name"], test_user1["email"], test_user1["password"]
         )
         if not duplicate_reg_success:
             print("❌ Duplicate registration test failed")
         
-        # Test 19: Test unauthorized access
+        # Test 30: Test unauthorized access
         self.token = None
         unauth_success = self.test_unauthorized_access()
         if not unauth_success:
             print("❌ Unauthorized access test failed")
+        
+        # Test 31: Test cross-user type access control
+        # Login as household user
+        if not self.login_user(test_user1["email"], test_user1["password"]):
+            print("❌ Login as household user failed, stopping tests")
+            return False
+        
+        # Try to access store endpoint
+        store_access_success, _ = self.run_test(
+            "Household User Access Store Endpoint (Should Fail)",
+            "GET",
+            "/api/store/products",
+            403
+        )
+        
+        if not store_access_success:
+            print("❌ Cross-user type access control test failed")
+        else:
+            print("✅ Cross-user type access control working - household user cannot access store endpoints")
+            
+        # Login as store user
+        self.token = store_token
+        
+        # Try to access household endpoint
+        household_access_success, _ = self.run_test(
+            "Store User Access Household Endpoint (Should Fail)",
+            "GET",
+            "/api/lists",
+            403
+        )
+        
+        if not household_access_success:
+            print("❌ Cross-user type access control test failed")
+        else:
+            print("✅ Cross-user type access control working - store user cannot access household endpoints")
         
         print(f"\n===== API TESTS COMPLETED =====")
         print(f"Tests passed: {self.tests_passed}/{self.tests_run} ({self.tests_passed/self.tests_run*100:.1f}%)")
