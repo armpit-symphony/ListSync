@@ -130,17 +130,16 @@ const LandingPage = ({ onHouseholdLogin, onStoreLogin, onAdminLogin }) => {
   );
 };
 
-// Admin Login Component
-const AdminLogin = ({ onLoginSuccess, onBack }) => {
-  const [email, setEmail] = useState('');
+// Admin Login Component (Enhanced)
+const AdminLogin = ({ onLoginSuccess, onBack, showToast }) => {
+  const [email, setEmail] = useState('admin@shopsync.com'); // Pre-fill for convenience
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
 
   const handleLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
-    setError('');
 
     try {
       const response = await apiCall('/api/admin/auth/login', {
@@ -150,9 +149,10 @@ const AdminLogin = ({ onLoginSuccess, onBack }) => {
 
       localStorage.setItem('token', response.access_token);
       localStorage.setItem('userType', response.user_type);
+      showToast.success('Admin login successful! Welcome to the admin dashboard.');
       onLoginSuccess('admin');
     } catch (err) {
-      setError(err.message);
+      showToast.error(`Login failed: ${err.message}`);
     } finally {
       setLoading(false);
     }
@@ -160,16 +160,17 @@ const AdminLogin = ({ onLoginSuccess, onBack }) => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-700 to-gray-900 flex items-center justify-center p-4">
-      <div className="max-w-md w-full bg-white rounded-xl shadow-2xl p-8">
+      <div className="max-w-md w-full bg-white rounded-xl shadow-2xl p-8 transform transition-all duration-300 hover:scale-105">
         <div className="text-center mb-8">
           <button
             onClick={onBack}
-            className="text-gray-600 hover:text-gray-800 mb-4"
+            className="text-gray-600 hover:text-gray-800 mb-4 flex items-center transition duration-200"
           >
             ← Back to Home
           </button>
+          <div className="text-4xl mb-4">🔐</div>
           <h1 className="text-3xl font-bold text-gray-800 mb-2">Admin Access</h1>
-          <p className="text-gray-600">Platform administration</p>
+          <p className="text-gray-600">Platform administration dashboard</p>
         </div>
 
         <form onSubmit={handleLogin} className="space-y-6">
@@ -181,9 +182,10 @@ const AdminLogin = ({ onLoginSuccess, onBack }) => {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent"
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent transition duration-200"
               placeholder="Enter admin email"
               required
+              disabled={loading}
             />
           </div>
 
@@ -191,33 +193,49 @@ const AdminLogin = ({ onLoginSuccess, onBack }) => {
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Password
             </label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent"
-              placeholder="Enter password"
-              required
-            />
-          </div>
-
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
-              {error}
+            <div className="relative">
+              <input
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent transition duration-200"
+                placeholder="Enter password"
+                required
+                disabled={loading}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
+                disabled={loading}
+              >
+                {showPassword ? '👁️' : '👁️‍🗨️'}
+              </button>
             </div>
-          )}
+          </div>
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-gray-700 hover:bg-gray-800 text-white font-semibold py-3 px-4 rounded-lg transition duration-200 disabled:opacity-50"
+            className="w-full bg-gray-700 hover:bg-gray-800 text-white font-semibold py-3 px-4 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
           >
-            {loading ? 'Signing In...' : 'Admin Sign In'}
+            {loading ? (
+              <>
+                <LoadingSpinner size="sm" />
+                <span className="ml-2">Signing In...</span>
+              </>
+            ) : (
+              'Admin Sign In'
+            )}
           </button>
         </form>
 
         <div className="mt-6 text-center text-sm text-gray-500">
-          <p>Default: admin@shopsync.com / admin123</p>
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+            <p className="font-medium">Default Credentials:</p>
+            <p>Email: admin@shopsync.com</p>
+            <p>Password: admin123</p>
+          </div>
         </div>
       </div>
     </div>
