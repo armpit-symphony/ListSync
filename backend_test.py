@@ -12,9 +12,12 @@ class ShoppingListAPITester:
         self.tests_run = 0
         self.tests_passed = 0
         self.user_id = None
+        self.user_type = None
         self.test_users = []
         self.test_lists = []
         self.test_items = []
+        self.test_stores = []
+        self.test_products = []
 
     def run_test(self, name, method, endpoint, expected_status, data=None, headers=None):
         """Run a single API test"""
