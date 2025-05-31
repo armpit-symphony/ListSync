@@ -439,9 +439,17 @@ class ShoppingListAPITester:
         
         return success, response
 
-    def run_all_tests(self):
-        """Run all API tests"""
-        # Generate unique test data
+    def test_unauthorized_access(self):
+        """Test accessing protected endpoint without token"""
+        success, _ = self.run_test(
+            "Unauthorized Access",
+            "GET",
+            "/api/lists",
+            401,
+            headers={'Content-Type': 'application/json'}
+        )
+        
+        return success
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         test_user1 = {
             "name": f"Test User 1 {timestamp}",
