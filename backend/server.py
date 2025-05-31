@@ -13,6 +13,9 @@ from enum import Enum
 import stripe
 import paypalrestsdk
 from cryptography.fernet import Fernet
+from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
+from jinja2 import Template
+import asyncio
 
 # Environment variables
 MONGO_URL = os.environ.get('MONGO_URL', 'mongodb://localhost:27017/')
