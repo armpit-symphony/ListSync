@@ -29,7 +29,7 @@ const apiCall = async (endpoint, options = {}) => {
 };
 
 // Landing Page Component
-const LandingPage = ({ onHouseholdLogin, onStoreLogin }) => {
+const LandingPage = ({ onHouseholdLogin, onStoreLogin, onAdminLogin }) => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center p-4">
       <div className="max-w-4xl w-full text-center">
@@ -92,7 +92,7 @@ const LandingPage = ({ onHouseholdLogin, onStoreLogin }) => {
               </div>
               <div className="flex items-center text-gray-700">
                 <span className="text-green-500 mr-2">✓</span>
-                Flexible pricing plans
+                $12/month or $74.99/year
               </div>
               <div className="flex items-center text-gray-700">
                 <span className="text-green-500 mr-2">✓</span>
@@ -108,6 +108,16 @@ const LandingPage = ({ onHouseholdLogin, onStoreLogin }) => {
           </div>
         </div>
 
+        {/* Admin Link */}
+        <div className="mt-8">
+          <button
+            onClick={onAdminLogin}
+            className="text-blue-100 hover:text-white text-sm underline"
+          >
+            Admin Access
+          </button>
+        </div>
+
         <div className="mt-12 text-blue-100">
           <p className="text-lg">Trusted by families and stores nationwide</p>
         </div>
@@ -116,7 +126,648 @@ const LandingPage = ({ onHouseholdLogin, onStoreLogin }) => {
   );
 };
 
-// Household Login Component
+// Admin Login Component
+const AdminLogin = ({ onLoginSuccess, onBack }) => {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+
+    try {
+      const response = await apiCall('/api/admin/auth/login', {
+        method: 'POST',
+        body: { email, password },
+      });
+
+      localStorage.setItem('token', response.access_token);
+      localStorage.setItem('userType', response.user_type);
+      onLoginSuccess('admin');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-gray-700 to-gray-900 flex items-center justify-center p-4">
+      <div className="max-w-md w-full bg-white rounded-xl shadow-2xl p-8">
+        <div className="text-center mb-8">
+          <button
+            onClick={onBack}
+            className="text-gray-600 hover:text-gray-800 mb-4"
+          >
+            ← Back to Home
+          </button>
+          <h1 className="text-3xl font-bold text-gray-800 mb-2">Admin Access</h1>
+          <p className="text-gray-600">Platform administration</p>
+        </div>
+
+        <form onSubmit={handleLogin} className="space-y-6">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Admin Email
+            </label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent"
+              placeholder="Enter admin email"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Password
+            </label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent"
+              placeholder="Enter password"
+              required
+            />
+          </div>
+
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+              {error}
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full bg-gray-700 hover:bg-gray-800 text-white font-semibold py-3 px-4 rounded-lg transition duration-200 disabled:opacity-50"
+          >
+            {loading ? 'Signing In...' : 'Admin Sign In'}
+          </button>
+        </form>
+
+        <div className="mt-6 text-center text-sm text-gray-500">
+          <p>Default: admin@shopsync.com / admin123</p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Admin Dashboard Component
+const AdminDashboard = ({ onLogout }) => {
+  const [stats, setStats] = useState(null);
+  const [subscriptions, setSubscriptions] = useState([]);
+  const [paymentConfig, setPaymentConfig] = useState({});
+  const [configStatus, setConfigStatus] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState('overview');
+  const [adminInfo, setAdminInfo] = useState(null);
+
+  useEffect(() => {
+    fetchAdminData();
+  }, []);
+
+  const fetchAdminData = async () => {
+    try {
+      const [statsData, subscriptionsData, configStatusData, adminData] = await Promise.all([
+        apiCall('/api/admin/stats'),
+        apiCall('/api/admin/subscriptions'),
+        apiCall('/api/admin/payment/config'),
+        apiCall('/api/admin/auth/me')
+      ]);
+
+      setStats(statsData);
+      setSubscriptions(subscriptionsData.subscriptions);
+      setConfigStatus(configStatusData);
+      setAdminInfo(adminData);
+    } catch (err) {
+      console.error('Failed to fetch admin data:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleConfigUpdate = async () => {
+    try {
+      await apiCall('/api/admin/payment/config', {
+        method: 'POST',
+        body: paymentConfig,
+      });
+
+      alert('Payment configuration updated successfully');
+      fetchAdminData();
+    } catch (err) {
+      alert('Failed to update configuration: ' + err.message);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('userType');
+    onLogout();
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-500 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading admin dashboard...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <header className="bg-white shadow-sm border-b">
+        <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-800">ShopSync Admin</h1>
+            {adminInfo && <p className="text-gray-600">Welcome, {adminInfo.name}</p>}
+          </div>
+          <button
+            onClick={handleLogout}
+            className="text-gray-600 hover:text-gray-800 font-medium"
+          >
+            Logout
+          </button>
+        </div>
+      </header>
+
+      {/* Navigation Tabs */}
+      <div className="max-w-7xl mx-auto px-4 py-4">
+        <div className="border-b border-gray-200">
+          <nav className="-mb-px flex space-x-8">
+            {['overview', 'payments', 'subscriptions'].map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`py-2 px-1 border-b-2 font-medium text-sm capitalize ${
+                  activeTab === tab
+                    ? 'border-gray-500 text-gray-700'
+                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                {tab}
+              </button>
+            ))}
+          </nav>
+        </div>
+      </div>
+
+      {/* Content */}
+      <main className="max-w-7xl mx-auto px-4 py-8">
+        {activeTab === 'overview' && (
+          <AdminOverview stats={stats} />
+        )}
+        {activeTab === 'payments' && (
+          <AdminPayments 
+            paymentConfig={paymentConfig}
+            setPaymentConfig={setPaymentConfig}
+            configStatus={configStatus}
+            onConfigUpdate={handleConfigUpdate}
+          />
+        )}
+        {activeTab === 'subscriptions' && (
+          <AdminSubscriptions subscriptions={subscriptions} />
+        )}
+      </main>
+    </div>
+  );
+};
+
+// Admin Overview Component
+const AdminOverview = ({ stats }) => {
+  if (!stats) return <div>Loading...</div>;
+
+  return (
+    <div className="space-y-8">
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="bg-white rounded-xl shadow-sm border p-6">
+          <h3 className="text-lg font-semibold text-gray-800 mb-2">Total Stores</h3>
+          <p className="text-3xl font-bold text-blue-500">{stats.total_stores}</p>
+        </div>
+        
+        <div className="bg-white rounded-xl shadow-sm border p-6">
+          <h3 className="text-lg font-semibold text-gray-800 mb-2">Active Subscriptions</h3>
+          <p className="text-3xl font-bold text-green-500">{stats.active_subscriptions}</p>
+        </div>
+        
+        <div className="bg-white rounded-xl shadow-sm border p-6">
+          <h3 className="text-lg font-semibold text-gray-800 mb-2">Trial Stores</h3>
+          <p className="text-3xl font-bold text-yellow-500">{stats.trial_stores}</p>
+        </div>
+        
+        <div className="bg-white rounded-xl shadow-sm border p-6">
+          <h3 className="text-lg font-semibold text-gray-800 mb-2">Total Households</h3>
+          <p className="text-3xl font-bold text-purple-500">{stats.total_households}</p>
+        </div>
+      </div>
+
+      {/* Revenue Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="bg-white rounded-xl shadow-sm border p-6">
+          <h3 className="text-lg font-semibold text-gray-800 mb-2">Monthly Revenue</h3>
+          <p className="text-3xl font-bold text-green-600">${stats.monthly_revenue.toFixed(2)}</p>
+          <p className="text-sm text-gray-500">From monthly plans</p>
+        </div>
+        
+        <div className="bg-white rounded-xl shadow-sm border p-6">
+          <h3 className="text-lg font-semibold text-gray-800 mb-2">Yearly Revenue</h3>
+          <p className="text-3xl font-bold text-green-600">${stats.yearly_revenue.toFixed(2)}</p>
+          <p className="text-sm text-gray-500">From yearly plans</p>
+        </div>
+        
+        <div className="bg-white rounded-xl shadow-sm border p-6">
+          <h3 className="text-lg font-semibold text-gray-800 mb-2">Total MRR</h3>
+          <p className="text-3xl font-bold text-green-700">${stats.total_monthly_recurring.toFixed(2)}</p>
+          <p className="text-sm text-gray-500">Monthly recurring revenue</p>
+        </div>
+      </div>
+
+      {/* Additional Stats */}
+      <div className="bg-white rounded-xl shadow-sm border p-6">
+        <h2 className="text-xl font-semibold text-gray-800 mb-4">Platform Overview</h2>
+        <div className="grid md:grid-cols-2 gap-6">
+          <div>
+            <p className="text-gray-600 mb-2"><strong>Total Products Listed:</strong> {stats.total_products}</p>
+            <p className="text-gray-600 mb-2"><strong>Conversion Rate:</strong> {((stats.active_subscriptions / stats.total_stores) * 100).toFixed(1)}%</p>
+          </div>
+          <div>
+            <p className="text-gray-600 mb-2"><strong>Average Revenue Per Store:</strong> ${(stats.total_monthly_recurring / stats.active_subscriptions || 0).toFixed(2)}</p>
+            <p className="text-gray-600 mb-2"><strong>Stores in Trial:</strong> {stats.trial_stores}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Admin Payments Component
+const AdminPayments = ({ paymentConfig, setPaymentConfig, configStatus, onConfigUpdate }) => {
+  const handleInputChange = (field, value) => {
+    setPaymentConfig(prev => ({
+      ...prev,
+      [field]: value
+    }));
+  };
+
+  return (
+    <div className="space-y-8">
+      <h2 className="text-2xl font-semibold text-gray-800">Payment Configuration</h2>
+      
+      {/* Configuration Status */}
+      <div className="bg-white rounded-xl shadow-sm border p-6">
+        <h3 className="text-lg font-semibold text-gray-800 mb-4">Configuration Status</h3>
+        <div className="space-y-3">
+          <div className="flex justify-between items-center">
+            <span className="text-gray-700">Stripe Integration</span>
+            <span className={`px-3 py-1 rounded-full text-sm ${
+              configStatus.stripe_configured 
+                ? 'bg-green-100 text-green-800' 
+                : 'bg-red-100 text-red-800'
+            }`}>
+              {configStatus.stripe_configured ? 'Configured' : 'Not Configured'}
+            </span>
+          </div>
+          <div className="flex justify-between items-center">
+            <span className="text-gray-700">PayPal Integration</span>
+            <span className={`px-3 py-1 rounded-full text-sm ${
+              configStatus.paypal_configured 
+                ? 'bg-green-100 text-green-800' 
+                : 'bg-red-100 text-red-800'
+            }`}>
+              {configStatus.paypal_configured ? 'Configured' : 'Not Configured'}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Stripe Configuration */}
+      <div className="bg-white rounded-xl shadow-sm border p-6">
+        <h3 className="text-lg font-semibold text-gray-800 mb-4">Stripe Configuration</h3>
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Secret Key
+            </label>
+            <input
+              type="password"
+              value={paymentConfig.stripe_secret_key || ''}
+              onChange={(e) => handleInputChange('stripe_secret_key', e.target.value)}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent"
+              placeholder="sk_test_... or sk_live_..."
+            />
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Publishable Key
+            </label>
+            <input
+              type="text"
+              value={paymentConfig.stripe_publishable_key || ''}
+              onChange={(e) => handleInputChange('stripe_publishable_key', e.target.value)}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent"
+              placeholder="pk_test_... or pk_live_..."
+            />
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Webhook Endpoint Secret
+            </label>
+            <input
+              type="password"
+              value={paymentConfig.stripe_endpoint_secret || ''}
+              onChange={(e) => handleInputChange('stripe_endpoint_secret', e.target.value)}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent"
+              placeholder="whsec_..."
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* PayPal Configuration */}
+      <div className="bg-white rounded-xl shadow-sm border p-6">
+        <h3 className="text-lg font-semibold text-gray-800 mb-4">PayPal Configuration</h3>
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Client ID
+            </label>
+            <input
+              type="text"
+              value={paymentConfig.paypal_client_id || ''}
+              onChange={(e) => handleInputChange('paypal_client_id', e.target.value)}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent"
+              placeholder="PayPal Client ID"
+            />
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Client Secret
+            </label>
+            <input
+              type="password"
+              value={paymentConfig.paypal_client_secret || ''}
+              onChange={(e) => handleInputChange('paypal_client_secret', e.target.value)}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent"
+              placeholder="PayPal Client Secret"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Update Button */}
+      <div className="flex justify-end">
+        <button
+          onClick={onConfigUpdate}
+          className="bg-gray-700 hover:bg-gray-800 text-white px-8 py-3 rounded-lg font-medium transition duration-200"
+        >
+          Update Configuration
+        </button>
+      </div>
+
+      {/* Instructions */}
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-6">
+        <h3 className="text-lg font-semibold text-blue-800 mb-4">Setup Instructions</h3>
+        <div className="space-y-3 text-blue-700">
+          <p><strong>Stripe:</strong> Get your API keys from <a href="https://dashboard.stripe.com/apikeys" target="_blank" rel="noopener noreferrer" className="underline">Stripe Dashboard</a></p>
+          <p><strong>PayPal:</strong> Create an app at <a href="https://developer.paypal.com/developer/applications" target="_blank" rel="noopener noreferrer" className="underline">PayPal Developer</a></p>
+          <p><strong>Webhooks:</strong> Set up webhook endpoints for payment event handling</p>
+          <p><strong>Security:</strong> All API keys are encrypted before storage</p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Admin Subscriptions Component
+const AdminSubscriptions = ({ subscriptions }) => {
+  return (
+    <div className="space-y-6">
+      <h2 className="text-2xl font-semibold text-gray-800">Store Subscriptions</h2>
+      
+      {subscriptions.length === 0 ? (
+        <div className="text-center py-16 bg-white rounded-xl shadow-sm border">
+          <div className="text-gray-400 text-6xl mb-4">📊</div>
+          <h3 className="text-xl font-semibold text-gray-600 mb-2">No subscriptions yet</h3>
+          <p className="text-gray-500">Stores haven't started subscribing yet</p>
+        </div>
+      ) : (
+        <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-200">
+            <h3 className="text-lg font-semibold text-gray-800">All Subscriptions</h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Store
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Plan
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Status
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Revenue
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Provider
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Start Date
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {subscriptions.map((subscription) => (
+                  <tr key={subscription.id}>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div>
+                        <div className="text-sm font-medium text-gray-900">
+                          {subscription.store_name || 'Unknown Store'}
+                        </div>
+                        <div className="text-sm text-gray-500">
+                          {subscription.store_email}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className="text-sm text-gray-900 capitalize">
+                        {subscription.plan}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                        subscription.status === 'active' 
+                          ? 'bg-green-100 text-green-800'
+                          : subscription.status === 'trial'
+                          ? 'bg-blue-100 text-blue-800'
+                          : 'bg-red-100 text-red-800'
+                      }`}>
+                        {subscription.status}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      ${subscription.monthly_price.toFixed(2)}/month
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 capitalize">
+                      {subscription.provider}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {new Date(subscription.start_date).toLocaleDateString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Store Subscription Component (Updated Pricing)
+const StoreSubscription = ({ subscription, onSubscriptionChange }) => {
+  const [loading, setLoading] = useState(false);
+
+  const handleStripeSubscribe = async (plan) => {
+    setLoading(true);
+    try {
+      const response = await apiCall('/api/stripe/create-checkout-session', {
+        method: 'POST',
+        body: { plan_type: plan }
+      });
+      
+      // Redirect to Stripe Checkout
+      window.location.href = response.session_url;
+    } catch (err) {
+      console.error('Stripe subscription failed:', err);
+      alert('Failed to start subscription process: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (subscription) {
+    return (
+      <div className="bg-white rounded-xl shadow-sm border p-6">
+        <h2 className="text-xl font-semibold text-gray-800 mb-4">Current Subscription</h2>
+        <div className="space-y-4">
+          <p><strong>Plan:</strong> {subscription.plan} Plan</p>
+          <p><strong>Status:</strong> {subscription.status}</p>
+          <p><strong>Monthly Price:</strong> ${subscription.monthly_price.toFixed(2)}</p>
+          <p><strong>Expires:</strong> {new Date(subscription.end_date).toLocaleDateString()}</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <h2 className="text-2xl font-semibold text-gray-800">Choose Your Plan</h2>
+      
+      <div className="grid md:grid-cols-2 gap-6">
+        {/* Monthly Plan - UPDATED PRICING */}
+        <div className="bg-white rounded-xl shadow-sm border p-6">
+          <h3 className="text-xl font-semibold text-gray-800 mb-4">Monthly Plan</h3>
+          <p className="text-3xl font-bold text-gray-800 mb-4">$12.00<span className="text-lg font-normal">/month</span></p>
+          <ul className="space-y-2 mb-6">
+            <li className="flex items-center text-gray-700">
+              <span className="text-green-500 mr-2">✓</span>
+              Unlimited product listings
+            </li>
+            <li className="flex items-center text-gray-700">
+              <span className="text-green-500 mr-2">✓</span>
+              Local family advertising
+            </li>
+            <li className="flex items-center text-gray-700">
+              <span className="text-green-500 mr-2">✓</span>
+              Analytics dashboard
+            </li>
+            <li className="flex items-center text-gray-700">
+              <span className="text-green-500 mr-2">✓</span>
+              Customer insights
+            </li>
+          </ul>
+          <button
+            onClick={() => handleStripeSubscribe('monthly')}
+            disabled={loading}
+            className="w-full bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 px-4 rounded-lg transition duration-200 disabled:opacity-50"
+          >
+            {loading ? 'Processing...' : 'Subscribe Monthly - $12.00'}
+          </button>
+        </div>
+
+        {/* Yearly Plan - UPDATED PRICING */}
+        <div className="bg-white rounded-xl shadow-sm border p-6 ring-2 ring-green-500">
+          <div className="text-center">
+            <span className="bg-green-500 text-white px-3 py-1 rounded-full text-sm font-medium">BEST VALUE</span>
+          </div>
+          <h3 className="text-xl font-semibold text-gray-800 mb-4 mt-4">Yearly Plan</h3>
+          <p className="text-3xl font-bold text-gray-800 mb-4">
+            $74.99<span className="text-lg font-normal">/year</span>
+            <span className="block text-sm text-gray-500">Just $6.25/month - Save 48%!</span>
+          </p>
+          <ul className="space-y-2 mb-6">
+            <li className="flex items-center text-gray-700">
+              <span className="text-green-500 mr-2">✓</span>
+              Everything in Monthly Plan
+            </li>
+            <li className="flex items-center text-gray-700">
+              <span className="text-green-500 mr-2">✓</span>
+              48% savings vs monthly
+            </li>
+            <li className="flex items-center text-gray-700">
+              <span className="text-green-500 mr-2">✓</span>
+              Priority customer support
+            </li>
+            <li className="flex items-center text-gray-700">
+              <span className="text-green-500 mr-2">✓</span>
+              Advanced analytics
+            </li>
+          </ul>
+          <button
+            onClick={() => handleStripeSubscribe('yearly')}
+            disabled={loading}
+            className="w-full bg-green-500 hover:bg-green-600 text-white font-semibold py-3 px-4 rounded-lg transition duration-200 disabled:opacity-50"
+          >
+            {loading ? 'Processing...' : 'Subscribe Yearly - $74.99'}
+          </button>
+        </div>
+      </div>
+
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-6">
+        <h3 className="text-lg font-semibold text-blue-800 mb-2">🔒 Secure Payment Processing</h3>
+        <p className="text-blue-700">
+          All payments are processed securely through Stripe. Your payment information is never stored on our servers.
+        </p>
+      </div>
+    </div>
+  );
+};
+
+// Include all other existing components (HouseholdLogin, StoreLogin, etc.) with minimal changes
+// Reusing existing components from previous version...
+
+// Household Login Component (unchanged)
 const HouseholdLogin = ({ onLoginSuccess, switchToRegister, onBack }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -218,7 +869,7 @@ const HouseholdLogin = ({ onLoginSuccess, switchToRegister, onBack }) => {
   );
 };
 
-// Household Register Component
+// Household Register Component (unchanged)
 const HouseholdRegister = ({ onRegisterSuccess, switchToLogin, onBack }) => {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -335,7 +986,7 @@ const HouseholdRegister = ({ onRegisterSuccess, switchToLogin, onBack }) => {
   );
 };
 
-// Store Login Component
+// Store Login Component (unchanged)
 const StoreLogin = ({ onLoginSuccess, switchToRegister, onBack }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -437,7 +1088,7 @@ const StoreLogin = ({ onLoginSuccess, switchToRegister, onBack }) => {
   );
 };
 
-// Store Register Component
+// Store Register Component (unchanged)
 const StoreRegister = ({ onRegisterSuccess, switchToLogin, onBack }) => {
   const [formData, setFormData] = useState({
     store_name: '',
@@ -491,7 +1142,7 @@ const StoreRegister = ({ onRegisterSuccess, switchToLogin, onBack }) => {
             ← Back to Home
           </button>
           <h1 className="text-3xl font-bold text-gray-800 mb-2">Join as a Store</h1>
-          <p className="text-gray-600">Start your 7-day free trial</p>
+          <p className="text-gray-600">Start your 7-day free trial - Just $12/month!</p>
         </div>
 
         <form onSubmit={handleRegister} className="space-y-6">
@@ -649,7 +1300,7 @@ const StoreRegister = ({ onRegisterSuccess, switchToLogin, onBack }) => {
   );
 };
 
-// Store Dashboard Component
+// Store Dashboard Component (updated pricing display)
 const StoreDashboard = ({ onLogout }) => {
   const [storeInfo, setStoreInfo] = useState(null);
   const [subscription, setSubscription] = useState(null);
@@ -705,7 +1356,7 @@ const StoreDashboard = ({ onLogout }) => {
           <div>
             <h1 className="text-2xl font-bold text-gray-800">{storeInfo?.store_name}</h1>
             <p className="text-gray-600">
-              {storeInfo?.subscription_status === 'trial' ? 'Free Trial' : 
+              {storeInfo?.subscription_status === 'trial' ? 'Free Trial Active' : 
                storeInfo?.subscription_status === 'active' ? 'Active Subscription' : 'Inactive'}
             </p>
           </div>
@@ -760,7 +1411,7 @@ const StoreDashboard = ({ onLogout }) => {
   );
 };
 
-// Store Overview Component
+// Store Overview Component (updated pricing display)
 const StoreOverview = ({ storeInfo, subscription, products }) => {
   return (
     <div className="space-y-8">
@@ -782,9 +1433,9 @@ const StoreOverview = ({ storeInfo, subscription, products }) => {
         </div>
         
         <div className="bg-white rounded-xl shadow-sm border p-6">
-          <h3 className="text-lg font-semibold text-gray-800 mb-2">Monthly Plan</h3>
+          <h3 className="text-lg font-semibold text-gray-800 mb-2">Monthly Cost</h3>
           <p className="text-3xl font-bold text-gray-800">
-            {subscription ? `$${subscription.monthly_price}` : 'No Plan'}
+            {subscription ? `$${subscription.monthly_price.toFixed(2)}` : 'No Plan'}
           </p>
         </div>
       </div>
@@ -809,11 +1460,24 @@ const StoreOverview = ({ storeInfo, subscription, products }) => {
           </div>
         </div>
       </div>
+
+      {/* Trial Notice */}
+      {storeInfo?.subscription_status === 'trial' && (
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-6">
+          <h3 className="text-lg font-semibold text-blue-800 mb-2">🎉 Free Trial Active</h3>
+          <p className="text-blue-700 mb-4">
+            You're currently on a 7-day free trial. After your trial ends, choose a subscription plan to continue advertising your products.
+          </p>
+          <p className="text-blue-700">
+            <strong>Trial expires:</strong> {new Date(storeInfo?.subscription_expires).toLocaleDateString()}
+          </p>
+        </div>
+      )}
     </div>
   );
 };
 
-// Store Products Component
+// Store Products Component (unchanged)
 const StoreProducts = ({ products, onProductsChange, showAddProduct, setShowAddProduct }) => {
   return (
     <div className="space-y-6">
@@ -881,7 +1545,7 @@ const StoreProducts = ({ products, onProductsChange, showAddProduct, setShowAddP
   );
 };
 
-// Add Product Modal Component
+// Add Product Modal Component (unchanged)
 const AddProductModal = ({ onClose, onProductAdded }) => {
   const [formData, setFormData] = useState({
     name: '',
@@ -1031,117 +1695,7 @@ const AddProductModal = ({ onClose, onProductAdded }) => {
   );
 };
 
-// Store Subscription Component
-const StoreSubscription = ({ subscription, onSubscriptionChange }) => {
-  const [loading, setLoading] = useState(false);
-
-  const handleSubscribe = async (plan) => {
-    setLoading(true);
-    try {
-      await apiCall('/api/store/subscription', {
-        method: 'POST',
-        body: { plan }
-      });
-      onSubscriptionChange();
-    } catch (err) {
-      console.error('Subscription failed:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  if (subscription) {
-    return (
-      <div className="bg-white rounded-xl shadow-sm border p-6">
-        <h2 className="text-xl font-semibold text-gray-800 mb-4">Current Subscription</h2>
-        <div className="space-y-4">
-          <p><strong>Plan:</strong> {subscription.plan} Plan</p>
-          <p><strong>Status:</strong> {subscription.status}</p>
-          <p><strong>Monthly Price:</strong> ${subscription.monthly_price}</p>
-          <p><strong>Expires:</strong> {new Date(subscription.end_date).toLocaleDateString()}</p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-6">
-      <h2 className="text-2xl font-semibold text-gray-800">Choose Your Plan</h2>
-      
-      <div className="grid md:grid-cols-2 gap-6">
-        {/* Monthly Plan */}
-        <div className="bg-white rounded-xl shadow-sm border p-6">
-          <h3 className="text-xl font-semibold text-gray-800 mb-4">Monthly Plan</h3>
-          <p className="text-3xl font-bold text-gray-800 mb-4">$99.99<span className="text-lg font-normal">/month</span></p>
-          <ul className="space-y-2 mb-6">
-            <li className="flex items-center text-gray-700">
-              <span className="text-green-500 mr-2">✓</span>
-              Unlimited product listings
-            </li>
-            <li className="flex items-center text-gray-700">
-              <span className="text-green-500 mr-2">✓</span>
-              Local family advertising
-            </li>
-            <li className="flex items-center text-gray-700">
-              <span className="text-green-500 mr-2">✓</span>
-              Analytics dashboard
-            </li>
-            <li className="flex items-center text-gray-700">
-              <span className="text-green-500 mr-2">✓</span>
-              Customer insights
-            </li>
-          </ul>
-          <button
-            onClick={() => handleSubscribe('monthly')}
-            disabled={loading}
-            className="w-full bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 px-4 rounded-lg transition duration-200 disabled:opacity-50"
-          >
-            {loading ? 'Processing...' : 'Choose Monthly'}
-          </button>
-        </div>
-
-        {/* Yearly Plan */}
-        <div className="bg-white rounded-xl shadow-sm border p-6 ring-2 ring-green-500">
-          <div className="text-center">
-            <span className="bg-green-500 text-white px-3 py-1 rounded-full text-sm font-medium">BEST VALUE</span>
-          </div>
-          <h3 className="text-xl font-semibold text-gray-800 mb-4 mt-4">Yearly Plan</h3>
-          <p className="text-3xl font-bold text-gray-800 mb-4">
-            $79.99<span className="text-lg font-normal">/month</span>
-            <span className="block text-sm text-gray-500">Billed annually ($959.88)</span>
-          </p>
-          <ul className="space-y-2 mb-6">
-            <li className="flex items-center text-gray-700">
-              <span className="text-green-500 mr-2">✓</span>
-              Everything in Monthly Plan
-            </li>
-            <li className="flex items-center text-gray-700">
-              <span className="text-green-500 mr-2">✓</span>
-              20% savings vs monthly
-            </li>
-            <li className="flex items-center text-gray-700">
-              <span className="text-green-500 mr-2">✓</span>
-              Priority customer support
-            </li>
-            <li className="flex items-center text-gray-700">
-              <span className="text-green-500 mr-2">✓</span>
-              Advanced analytics
-            </li>
-          </ul>
-          <button
-            onClick={() => handleSubscribe('yearly')}
-            disabled={loading}
-            className="w-full bg-green-500 hover:bg-green-600 text-white font-semibold py-3 px-4 rounded-lg transition duration-200 disabled:opacity-50"
-          >
-            {loading ? 'Processing...' : 'Choose Yearly'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// Enhanced Shopping List View with Store Prices
+// Enhanced Shopping List View with Store Prices (unchanged from previous version)
 const ShoppingListView = ({ list, onBack }) => {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1486,7 +2040,7 @@ const ShoppingListView = ({ list, onBack }) => {
   );
 };
 
-// Household Dashboard Component (existing, but updated with price integration)
+// Household Dashboard Component (updated with new pricing references)
 const HouseholdDashboard = ({ onSelectList, onLogout }) => {
   const [lists, setLists] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1671,9 +2225,9 @@ const HouseholdDashboard = ({ onSelectList, onLogout }) => {
   );
 };
 
-// Main App Component
+// Main App Component (updated with admin flow)
 function App() {
-  const [currentView, setCurrentView] = useState('landing'); // landing, household, store
+  const [currentView, setCurrentView] = useState('landing'); // landing, household, store, admin
   const [authState, setAuthState] = useState('login'); // login, register
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [userType, setUserType] = useState(null);
@@ -1729,6 +2283,16 @@ function App() {
         <LandingPage 
           onHouseholdLogin={() => setCurrentView('household-login')}
           onStoreLogin={() => setCurrentView('store-login')}
+          onAdminLogin={() => setCurrentView('admin-login')}
+        />
+      );
+    }
+
+    if (currentView === 'admin-login') {
+      return (
+        <AdminLogin
+          onLoginSuccess={handleAuthSuccess}
+          onBack={() => setCurrentView('landing')}
         />
       );
     }
@@ -1767,6 +2331,10 @@ function App() {
   }
 
   // Authenticated views
+  if (userType === 'admin') {
+    return <AdminDashboard onLogout={handleLogout} />;
+  }
+
   if (userType === 'store') {
     return <StoreDashboard onLogout={handleLogout} />;
   }
@@ -1789,7 +2357,7 @@ function App() {
     );
   }
 
-  return <LandingPage onHouseholdLogin={() => setCurrentView('household-login')} onStoreLogin={() => setCurrentView('store-login')} />;
+  return <LandingPage onHouseholdLogin={() => setCurrentView('household-login')} onStoreLogin={() => setCurrentView('store-login')} onAdminLogin={() => setCurrentView('admin-login')} />;
 }
 
 export default App;
