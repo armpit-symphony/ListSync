@@ -50,12 +50,12 @@ const LandingPage = ({ onHouseholdLogin, onStoreLogin, onAdminLogin }) => {
             <div className="text-6xl mb-4">🏠</div>
             <h2 className="text-2xl font-bold text-gray-800 mb-4">For Households</h2>
             <p className="text-gray-600 mb-6">
-              Create shared shopping lists with your family. See local store prices and never forget an item again.
+              Create shared shopping lists with your household. See local store prices and never forget an item again.
             </p>
             <div className="space-y-3 mb-6 text-left">
               <div className="flex items-center text-gray-700">
                 <span className="text-green-500 mr-2">✓</span>
-                Shared family shopping lists
+                Shared household shopping lists
               </div>
               <div className="flex items-center text-gray-700">
                 <span className="text-green-500 mr-2">✓</span>
@@ -78,12 +78,12 @@ const LandingPage = ({ onHouseholdLogin, onStoreLogin, onAdminLogin }) => {
             </button>
           </div>
 
-          {/* Grocery Stores */}
+          {/* Stores */}
           <div className="bg-white rounded-xl shadow-2xl p-8 hover:transform hover:scale-105 transition duration-300">
             <div className="text-6xl mb-4">🏪</div>
-            <h2 className="text-2xl font-bold text-gray-800 mb-4">For Grocery Stores</h2>
+            <h2 className="text-2xl font-bold text-gray-800 mb-4">For Stores</h2>
             <p className="text-gray-600 mb-6">
-              Advertise your products to local families. Increase foot traffic and customer engagement.
+              Advertise your products to local customers. Increase foot traffic and customer engagement.
             </p>
             <div className="space-y-3 mb-6 text-left">
               <div className="flex items-center text-gray-700">
