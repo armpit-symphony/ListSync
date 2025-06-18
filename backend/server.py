@@ -362,12 +362,12 @@ WELCOME_EMAIL_TEMPLATE = """
         </div>
         <div class="content">
             <h2>Hi {{name}}!</h2>
-            <p>Welcome to ShopSync - the shared shopping list platform connecting households with local grocery stores.</p>
+            <p>Welcome to ShopSync - the shared shopping list platform connecting households with local stores.</p>
             
             {% if user_type == 'household' %}
             <p><strong>You can now:</strong></p>
             <ul>
-                <li>✅ Create shared shopping lists with your family</li>
+                <li>✅ Create shared shopping lists with your household</li>
                 <li>✅ See real-time updates when others add items</li>
                 <li>✅ View local store prices for your items</li>
                 <li>✅ Never forget items again!</li>
@@ -376,7 +376,7 @@ WELCOME_EMAIL_TEMPLATE = """
             <p><strong>Your 7-day free trial has started!</strong></p>
             <ul>
                 <li>✅ Add your products and prices</li>
-                <li>✅ Advertise to local families</li>
+                <li>✅ Advertise to local customers</li>
                 <li>✅ Increase foot traffic to your store</li>
                 <li>✅ Only $12/month after trial</li>
             </ul>
