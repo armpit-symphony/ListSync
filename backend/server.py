@@ -694,7 +694,7 @@ async def create_stripe_checkout_session(plan_type: str, current_store = Depends
                     'recurring': {'interval': plans[plan_type]["interval"]},
                     'product_data': {
                         'name': f'ShopSync Store Subscription - {plan_type.title()}',
-                        'description': f'{plan_type.title()} subscription for grocery store advertising'
+                        'description': f'{plan_type.title()} subscription for store advertising'
                     }
                 },
                 'quantity': 1
