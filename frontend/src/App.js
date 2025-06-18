@@ -123,7 +123,7 @@ const LandingPage = ({ onHouseholdLogin, onStoreLogin, onAdminLogin }) => {
         </div>
 
         <div className="mt-12 text-blue-100">
-          <p className="text-lg">Trusted by families and stores nationwide</p>
+          <p className="text-lg">Trusted by households and stores nationwide</p>
         </div>
       </div>
     </div>
