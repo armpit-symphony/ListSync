@@ -1685,7 +1685,7 @@ const AddProductModal = ({ onClose, onProductAdded }) => {
               className="h-4 w-4 text-green-500 focus:ring-green-500 border-gray-300 rounded"
             />
             <label className="ml-2 block text-sm text-gray-700">
-              Advertise this product to local families
+              Advertise this product to local customers
             </label>
           </div>
 
