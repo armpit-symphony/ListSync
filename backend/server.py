@@ -430,7 +430,7 @@ SUBSCRIPTION_CONFIRMATION_TEMPLATE = """
             <p><strong>What's Next?</strong></p>
             <ul>
                 <li>✅ Add your products and prices</li>
-                <li>✅ Start advertising to local families</li>
+                <li>✅ Start advertising to local customers</li>
                 <li>✅ Monitor your performance in the dashboard</li>
                 <li>✅ Increase your store's visibility</li>
             </ul>
