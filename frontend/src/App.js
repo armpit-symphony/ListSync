@@ -1517,7 +1517,7 @@ const StoreProducts = ({ products, onProductsChange, showAddProduct, setShowAddP
         <div className="text-center py-16 bg-white rounded-xl shadow-sm border">
           <div className="text-gray-400 text-6xl mb-4">📦</div>
           <h3 className="text-xl font-semibold text-gray-600 mb-2">No products yet</h3>
-          <p className="text-gray-500 mb-6">Add your first product to start advertising to local families</p>
+          <p className="text-gray-500 mb-6">Add your first product to start advertising to local customers</p>
           <button
             onClick={() => setShowAddProduct(true)}
             className="bg-green-500 hover:bg-green-600 text-white px-6 py-3 rounded-lg font-medium transition duration-200"
