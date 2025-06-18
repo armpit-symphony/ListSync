@@ -40,7 +40,7 @@ const LandingPage = ({ onHouseholdLogin, onStoreLogin, onAdminLogin }) => {
         <div className="mb-12">
           <h1 className="text-5xl font-bold text-white mb-6">ShopSync</h1>
           <p className="text-xl text-blue-100 mb-8">
-            The shared shopping list platform connecting households with local grocery stores
+            The shared shopping list platform connecting households with local stores
           </p>
         </div>
 
