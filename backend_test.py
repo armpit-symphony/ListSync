@@ -470,7 +470,20 @@ class ShopSyncTester:
         return self.tests_passed == self.tests_run
 
 def main():
-    tester = ShopSyncTester()
+    """Historical remote smoke test.
+
+    The pilot disables the default admin login and payment calls this file
+    expects. Use pytest unless SHOPSYNC_REMOTE_BASE_URL points at an old server.
+    """
+    import os
+
+    remote = os.environ.get("SHOPSYNC_REMOTE_BASE_URL")
+    if not remote:
+        print("backend_test.py is the historical remote smoke test.")
+        print("This pilot disables admin@shopsync.com / admin123 and live billing.")
+        print("Run pytest tests/test_pilot_api.py tests/test_live_server.py instead.")
+        return 0
+    tester = ShopSyncTester(base_url=remote)
     success = tester.run_all_tests()
     return 0 if success else 1
 

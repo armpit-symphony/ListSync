@@ -46,6 +46,9 @@ agenthub/agents/youtube/db
 venv/
 .venv/
 __pycache__/
+.dev-secret
+backend/.dev-secret
+frontend/build/
 
 # ===================
 # ADDITIONAL RULES TO PREVENT FILE SIZE VIOLATIONS
