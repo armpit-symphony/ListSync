@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import './App.css';
 import LoadingSpinner from './components/LoadingSpinner';
 import { ToastContainer } from './components/NotificationToast';
@@ -320,40 +320,38 @@ const ShoppingListView = ({ list, onBack }) => {
   const [shareEmail, setShareEmail] = useState('');
   const [shareError, setShareError] = useState('');
   const [formError, setFormError] = useState('');
-  const [showPrices, setShowPrices] = useState(false);
+  const [openIds, setOpenIds] = useState({});
   const [pricesByItem, setPricesByItem] = useState({});
+  const [priceError, setPriceError] = useState({});
+  const openIdsRef = useRef({});
 
-  const loadItems = async () => {
-    const [itemRows, memberRows, basketRow] = await Promise.all([
-      apiCall(`/api/lists/${list.id}/items`),
-      apiCall(`/api/lists/${list.id}/members`),
-      apiCall(`/api/lists/${list.id}/basket-offer`),
-    ]);
-    setItems(itemRows);
-    setMembers(memberRows);
-    setBasket(basketRow);
-    return itemRows;
-  };
-
-  const loadPrices = async (itemRows) => {
-    const entries = await Promise.all(
-      itemRows.filter((item) => !item.is_purchased).map(async (item) => {
-        const prices = await apiCall(`/api/lists/${list.id}/items/${item.id}/example-prices`);
-        return [item.id, prices];
-      })
-    );
-    setPricesByItem(Object.fromEntries(entries));
+  const loadPricesFor = async (itemId) => {
+    try {
+      const prices = await apiCall(`/api/lists/${list.id}/items/${itemId}/example-prices`);
+      setPricesByItem((prev) => ({ ...prev, [itemId]: prices }));
+      setPriceError((prev) => ({ ...prev, [itemId]: '' }));
+      return prices;
+    } catch (err) {
+      setPriceError((prev) => ({ ...prev, [itemId]: err.message }));
+      return [];
+    }
   };
 
   useEffect(() => {
     let active = true;
     const refresh = async () => {
       try {
-        const itemRows = await loadItems();
+        const [itemRows, memberRows, basketRow] = await Promise.all([
+          apiCall(`/api/lists/${list.id}/items`),
+          apiCall(`/api/lists/${list.id}/members`),
+          apiCall(`/api/lists/${list.id}/basket-offer`),
+        ]);
         if (!active) return;
-        if (showPrices) {
-          await loadPrices(itemRows);
-        }
+        setItems(itemRows);
+        setMembers(memberRows);
+        setBasket(basketRow);
+        const open = Object.keys(openIdsRef.current).filter((id) => openIdsRef.current[id]);
+        await Promise.all(open.filter((id) => itemRows.some((row) => row.id === id)).map((id) => loadPricesFor(id)));
       } catch (err) {
         console.error(err);
       } finally {
@@ -377,7 +375,7 @@ const ShoppingListView = ({ list, onBack }) => {
       active = false;
       stop();
     };
-  }, [list.id, showPrices]);
+  }, [list.id]);
 
   const addItem = async (event) => {
     event.preventDefault();
@@ -427,67 +425,103 @@ const ShoppingListView = ({ list, onBack }) => {
     }
   };
 
-  const remaining = items.filter((item) => !item.is_purchased);
-  const purchased = items.filter((item) => item.is_purchased);
+  const toggleDisclosure = async (item) => {
+    const willOpen = !openIdsRef.current[item.id];
+    const next = { ...openIdsRef.current, [item.id]: willOpen };
+    openIdsRef.current = next;
+    setOpenIds(next);
+    if (willOpen) {
+      await loadPricesFor(item.id);
+    }
+  };
 
   const renderItem = (item) => {
-    const prices = pricesByItem[item.id] || [];
-    const detail = [
+    const open = Boolean(openIds[item.id]);
+    const prices = pricesByItem[item.id];
+    const written = [
       item.brand,
       item.package_size && item.package_unit ? `${item.package_size} ${item.package_unit}` : null,
-      `Qty ${item.quantity_count || item.quantity}`,
-    ].filter(Boolean).join(' · ');
+      `qty ${item.quantity_count || item.quantity}`,
+    ].filter(Boolean).join(', ');
+    const panelId = `prices-${item.id}`;
     return (
-      <div key={item.id} data-testid="item-row" data-item-name={item.name} data-purchased={item.is_purchased ? 'true' : 'false'} className="p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-start gap-3">
-            <button
-              type="button"
+      <div
+        key={item.id}
+        data-testid="item-row"
+        data-item-name={item.name}
+        data-purchased={item.is_purchased ? 'true' : 'false'}
+        data-open={open ? 'true' : 'false'}
+        className="notebook-line"
+      >
+        <div className="notebook-line-main">
+          <label className="notebook-check-hit">
+            <input
+              type="checkbox"
+              className="notebook-check"
               data-testid="item-toggle"
+              checked={Boolean(item.is_purchased)}
               aria-label={item.is_purchased ? `Mark ${item.name} not purchased` : `Mark ${item.name} purchased`}
-              onClick={() => toggleItem(item)}
-              className={`mt-1 w-6 h-6 rounded-full border-2 flex items-center justify-center ${item.is_purchased ? 'bg-green-600 border-green-600 text-white' : 'border-gray-300'}`}
-            >
-              {item.is_purchased ? '✓' : ''}
-            </button>
-            <div>
-              <p className={`font-medium text-gray-800 ${item.is_purchased ? 'line-through' : ''}`}>{item.name}</p>
-              <p className="text-sm text-gray-500">{detail}</p>
-              {item.added_by_name && <p className="text-xs text-gray-400">Added by {item.added_by_name}</p>}
-            </div>
-          </div>
-          <button type="button" data-testid="item-delete" aria-label={`Delete ${item.name}`} onClick={() => deleteItem(item)} className="text-gray-400 hover:text-red-600">
-            Delete
+              onChange={() => toggleItem(item)}
+            />
+          </label>
+          <p className={`notebook-script ${item.is_purchased ? 'is-checked' : ''}`}>
+            <span className="notebook-item-name">{item.name}</span>
+            {written && <span className="notebook-item-note"> {written}</span>}
+          </p>
+          <button
+            type="button"
+            data-testid="show-prices"
+            className="notebook-drop"
+            aria-expanded={open}
+            aria-controls={panelId}
+            onClick={() => toggleDisclosure(item)}
+          >
+            Prices <span aria-hidden="true">{open ? '▴' : '▾'}</span>
           </button>
         </div>
-        {showPrices && !item.is_purchased && (
-          <div className="mt-3 ml-0 sm:ml-9 space-y-2">
-            {prices.length === 0 && (
-              <p className="text-sm text-gray-500">No example prices with this exact item name.</p>
+        {open && (
+          <div id={panelId} className="notebook-drop-panel" data-testid="price-panel">
+            <p className="notebook-drop-kicker">
+              {item.added_by_name ? `Added by ${item.added_by_name}. ` : ''}
+              Example prices only. Nothing here says a store has this in stock.
+            </p>
+            {priceError[item.id] && <p className="notebook-warn">{priceError[item.id]}</p>}
+            {prices && prices.length === 0 && (
+              <p>No example prices with this exact item name.</p>
             )}
-            {prices.map((price) => (
-              <div key={price.product_id} data-testid="price-card" data-comparable={price.comparable ? 'true' : 'false'} className="rounded-lg border bg-gray-50 p-3 text-sm">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
-                  <p className="font-medium text-gray-800">{price.store_name}</p>
-                  <p className="font-semibold text-gray-900">
-                    <span className="uppercase text-xs tracking-wide text-amber-700 mr-2">{price.price_label}</span>
+            {prices && prices.map((price) => (
+              <div key={price.product_id} data-testid="price-card" data-comparable={price.comparable ? 'true' : 'false'} className="notebook-price">
+                <div className="notebook-price-top">
+                  <p className="notebook-store">{price.store_name}</p>
+                  <p className="notebook-amount">
+                    <span className="notebook-example">{price.price_label}</span>
                     ${price.price.toFixed(2)}
                   </p>
                 </div>
-                <p className="text-gray-600">
+                <p>
                   {price.brand || 'Brand not recorded'} · {price.package_size} {price.package_unit}
                   {' · '}{price.locality_city}, {price.locality_state} {price.locality_zip}
                 </p>
-                <p className={price.comparable ? 'text-green-700' : 'text-amber-800'}>
+                <p className={price.comparable ? 'notebook-match' : 'notebook-differ'}>
                   {price.comparable
                     ? 'Comparable example: brand, package size, and unit match. This is still not a live price or a stock check.'
                     : `Not the same product. ${price.comparability_reasons.join(', ')}.`}
                 </p>
-                <p className="text-gray-500">{localityText[price.locality_relation] || price.locality_relation}</p>
-                <p className="text-gray-500">{price.validity_note}</p>
-                <p className="text-gray-500">{price.availability_note}</p>
+                <p>{localityText[price.locality_relation] || price.locality_relation}</p>
+                <p>{price.validity_note}</p>
+                <p>{price.availability_note}</p>
               </div>
             ))}
+            {!prices && !priceError[item.id] && <p>Looking up example prices…</p>}
+            <button
+              type="button"
+              data-testid="item-delete"
+              aria-label={`Delete ${item.name}`}
+              className="notebook-delete"
+              onClick={() => deleteItem(item)}
+            >
+              Remove this line
+            </button>
           </div>
         )}
       </div>
@@ -496,87 +530,62 @@ const ShoppingListView = ({ list, onBack }) => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <LoadingSpinner message="Loading the list..." />
+      <div className="notebook-desk flex items-center justify-center">
+        <LoadingSpinner message="Opening the notebook..." />
       </div>
     );
   }
 
+  const stillToBuy = items.filter((item) => !item.is_purchased).length;
+
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b">
-        <div className="max-w-4xl mx-auto px-4 py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <button type="button" onClick={onBack} className="text-gray-600 text-sm">← All lists</button>
-            <h1 className="text-2xl font-bold text-gray-800">{list.name}</h1>
-            <p className="text-sm text-gray-500">
-              {remaining.length} remaining · {members.length} member{members.length === 1 ? '' : 's'} ·{' '}
-              <span data-testid="live-status">{liveStatus === 'live' ? 'Live' : 'Reconnecting'}</span>
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              data-testid="show-prices"
-              onClick={() => setShowPrices((value) => !value)}
-              className={`px-4 py-2 rounded-lg font-medium ${showPrices ? 'bg-green-600 text-white' : 'bg-gray-200 text-gray-800'}`}
-            >
-              {showPrices ? 'Hide example prices' : 'Show example prices'}
-            </button>
-            <button type="button" data-testid="share-list" onClick={() => setShowShare(true)} className="px-4 py-2 rounded-lg bg-blue-600 text-white font-medium">
+    <div className="notebook-desk">
+      <article className="notebook-sheet">
+        <header className="notebook-head">
+          <div className="notebook-head-row">
+            <button type="button" onClick={onBack} className="notebook-text-btn">← All lists</button>
+            <button type="button" data-testid="share-list" onClick={() => setShowShare(true)} className="notebook-text-btn">
               Share
             </button>
           </div>
-        </div>
-      </header>
-
-      <main className="max-w-4xl mx-auto px-4 py-6 space-y-6">
-        <section data-testid="basket-placeholder" className="rounded-xl border border-dashed border-gray-400 bg-white p-4">
-          <h2 className="font-semibold text-gray-800">Whole-basket retailer offer</h2>
-          <p className="text-sm text-gray-600 mt-1">{basket?.message}</p>
-          <p className="text-sm text-gray-500 mt-1">Implemented: {basket?.implemented ? 'yes' : 'no'}. Offers: none.</p>
-        </section>
-
-        <form onSubmit={addItem} className="bg-white rounded-xl border p-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <input data-testid="item-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={fieldClass} placeholder="Item name, such as whole milk" required />
-          <input data-testid="item-brand" value={form.brand} onChange={(e) => setForm({ ...form, brand: e.target.value })} className={fieldClass} placeholder="Brand" />
-          <input data-testid="item-package-size" value={form.package_size} onChange={(e) => setForm({ ...form, package_size: e.target.value })} className={fieldClass} placeholder="Package size" inputMode="decimal" />
-          <select data-testid="item-package-unit" value={form.package_unit} onChange={(e) => setForm({ ...form, package_unit: e.target.value })} className={fieldClass}>
-            <option value="">Package unit</option>
-            {PACKAGE_UNITS.map((unit) => (
-              <option key={unit} value={unit}>{unit}</option>
-            ))}
-          </select>
-          <input data-testid="item-quantity" value={form.quantity_count} onChange={(e) => setForm({ ...form, quantity_count: e.target.value })} className={fieldClass} placeholder="How many" inputMode="decimal" />
-          <button data-testid="add-item" type="submit" className="bg-blue-600 text-white rounded-lg font-medium px-4 py-3">
-            Add item
-          </button>
-          {formError && <p data-testid="form-error" className="sm:col-span-2 text-red-700 text-sm">{formError}</p>}
-          <p className="sm:col-span-2 text-xs text-gray-500">
-            Brand, package size, and unit are what make an example price comparable. A different size or unit is kept as a different product. Nothing here checks whether a store has it in stock.
+          <h1 className="notebook-title">{list.name}</h1>
+          <p className="notebook-subtitle">
+            {stillToBuy} still to buy · {members.map((member) => member.name).join(', ') || 'just you'} ·{' '}
+            <span data-testid="live-status">{liveStatus === 'live' ? 'Live' : 'Reconnecting'}</span>
           </p>
-        </form>
+        </header>
 
-        <section className="bg-white rounded-xl border divide-y">
-          <div className="p-4 font-semibold text-gray-800">To buy</div>
-          {remaining.length === 0 && <p className="p-4 text-gray-500">Nothing left to buy.</p>}
-          {remaining.map(renderItem)}
-        </section>
+        <div className="notebook-rules">
+          {items.length === 0 && <p className="notebook-blank">The page is blank. Write the first line below.</p>}
+          {items.map(renderItem)}
 
-        {purchased.length > 0 && (
-          <section className="bg-white rounded-xl border divide-y">
-            <div className="p-4 font-semibold text-gray-800">Checked off</div>
-            {purchased.map(renderItem)}
-          </section>
-        )}
+          <form onSubmit={addItem} className="notebook-add">
+            <input data-testid="item-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="notebook-input" placeholder="Write an item" required />
+            <div className="notebook-add-grid">
+              <input data-testid="item-brand" value={form.brand} onChange={(e) => setForm({ ...form, brand: e.target.value })} className="notebook-input notebook-input-small" placeholder="Brand" />
+              <input data-testid="item-package-size" value={form.package_size} onChange={(e) => setForm({ ...form, package_size: e.target.value })} className="notebook-input notebook-input-small" placeholder="Size" inputMode="decimal" />
+              <select data-testid="item-package-unit" value={form.package_unit} onChange={(e) => setForm({ ...form, package_unit: e.target.value })} className="notebook-input notebook-input-small" aria-label="Package unit">
+                <option value="">Unit</option>
+                {PACKAGE_UNITS.map((unit) => (
+                  <option key={unit} value={unit}>{unit}</option>
+                ))}
+              </select>
+              <input data-testid="item-quantity" value={form.quantity_count} onChange={(e) => setForm({ ...form, quantity_count: e.target.value })} className="notebook-input notebook-input-small" placeholder="Qty" inputMode="decimal" aria-label="Quantity" />
+            </div>
+            {formError && <p data-testid="form-error" className="notebook-warn">{formError}</p>}
+            <button data-testid="add-item" type="submit" className="notebook-add-btn">Add item</button>
+          </form>
+        </div>
 
-        <section className="text-sm text-gray-500">
-          Members: {members.map((member) => `${member.name} (${member.role})`).join(', ') || 'just you'}
-        </section>
-      </main>
+        <footer className="notebook-foot" data-testid="basket-placeholder">
+          <p className="notebook-foot-title">Whole-basket retailer offer</p>
+          <p>{basket?.message}</p>
+          <p>Implemented: {basket?.implemented ? 'yes' : 'no'}. Offers: none.</p>
+        </footer>
+      </article>
 
       {showShare && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
           <form onSubmit={shareList} className="bg-white rounded-xl max-w-md w-full p-6 space-y-4">
             <h3 className="text-xl font-semibold">Share with a household member</h3>
             <p className="text-sm text-gray-600">They need a ListSync account already. Retailers are not added to household lists.</p>
@@ -662,63 +671,64 @@ const HouseholdDashboard = ({ onSelectList, onLogout }) => {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <LoadingSpinner message="Loading your lists..." />
+      <div className="notebook-desk flex items-center justify-center">
+        <LoadingSpinner message="Opening your notebook..." />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b">
-        <div className="max-w-5xl mx-auto px-4 py-4 flex justify-between items-center gap-3">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-800">ListSync</h1>
-            <p className="text-gray-600 text-sm">{user ? `Hello, ${user.name}` : 'Household'} · <span data-testid="live-status">{liveStatus === 'live' ? 'Live' : 'Reconnecting'}</span></p>
+    <div className="notebook-desk">
+      <article className="notebook-sheet">
+        <header className="notebook-head">
+          <div className="notebook-head-row">
+            <p className="notebook-kicker">ListSync</p>
+            <button data-testid="logout" type="button" onClick={logout} className="notebook-text-btn">Log out</button>
           </div>
-          <button data-testid="logout" type="button" onClick={logout} className="text-gray-700 font-medium">Log out</button>
-        </div>
-      </header>
-      <main className="max-w-5xl mx-auto px-4 py-6 space-y-6">
-        <section className="bg-white rounded-xl border p-4">
-          <h2 className="font-semibold text-gray-800 mb-2">Your place</h2>
-          <p className="text-sm text-gray-500 mb-3">Optional. Used only to say whether a retailer example price is local. It is not shared with retailers as a shopping list.</p>
-          <form onSubmit={saveLocation} className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-            <input data-testid="home-city" value={location.home_city} onChange={(e) => setLocation({ ...location, home_city: e.target.value })} className={fieldClass} placeholder="City" />
-            <input data-testid="home-state" value={location.home_state} onChange={(e) => setLocation({ ...location, home_state: e.target.value })} className={fieldClass} placeholder="State" />
-            <input data-testid="home-zip" value={location.home_zip} onChange={(e) => setLocation({ ...location, home_zip: e.target.value })} className={fieldClass} placeholder="ZIP" />
-            <button data-testid="save-location" type="submit" className="bg-gray-800 text-white rounded-lg px-4 py-3">Save</button>
-          </form>
-          {locationMessage && <p className="text-sm text-green-700 mt-2">{locationMessage}</p>}
-        </section>
-
-        <div className="flex justify-between items-center">
-          <h2 className="text-xl font-semibold text-gray-800">Lists</h2>
-          <button data-testid="new-list" type="button" onClick={() => setShowCreate(true)} className="bg-blue-600 text-white px-4 py-2 rounded-lg">New list</button>
-        </div>
-
-        {lists.length === 0 ? (
-          <div className="bg-white rounded-xl border p-8 text-center text-gray-600">No lists yet. Create one for this week.</div>
-        ) : (
-          <div className="grid gap-4 sm:grid-cols-2">
-            {lists.map((row) => (
+          <h1 className="notebook-title">{user ? user.name : 'Household'}</h1>
+          <p className="notebook-subtitle">
+            <span data-testid="live-status">{liveStatus === 'live' ? 'Live' : 'Reconnecting'}</span>
+            {' · '}pick a list, or start a new page
+          </p>
+        </header>
+        <div className="notebook-rules">
+          <div className="notebook-line-main notebook-index-tools">
+            <button data-testid="new-list" type="button" onClick={() => setShowCreate(true)} className="notebook-add-btn">
+              New list
+            </button>
+          </div>
+          {lists.length === 0 ? (
+            <p className="notebook-blank">No lists yet. Create one for this week.</p>
+          ) : (
+            lists.map((row) => (
               <button
                 type="button"
                 key={row.id}
                 data-testid="list-card"
                 onClick={() => onSelectList(row)}
-                className="text-left bg-white rounded-xl border p-5 hover:border-blue-400"
+                className="notebook-index-line"
               >
-                <h3 className="text-lg font-semibold text-gray-800">{row.name}</h3>
-                <p className="text-sm text-gray-500 mt-2">{row.shared_with.length + 1} member{row.shared_with.length === 0 ? '' : 's'}</p>
+                <span className="notebook-script">{row.name}</span>
+                <span className="notebook-index-count">{row.shared_with.length + 1} member{row.shared_with.length === 0 ? '' : 's'}</span>
               </button>
-            ))}
-          </div>
-        )}
-      </main>
+            ))
+          )}
+        </div>
+        <footer className="notebook-foot">
+          <p className="notebook-foot-title">Your place</p>
+          <p>Optional. Used only to say whether an example price is local. It is not shared with retailers as a shopping list.</p>
+          <form onSubmit={saveLocation} className="notebook-place">
+            <input data-testid="home-city" value={location.home_city} onChange={(e) => setLocation({ ...location, home_city: e.target.value })} className="notebook-input notebook-input-small" placeholder="City" aria-label="City" />
+            <input data-testid="home-state" value={location.home_state} onChange={(e) => setLocation({ ...location, home_state: e.target.value })} className="notebook-input notebook-input-small" placeholder="State" aria-label="State" />
+            <input data-testid="home-zip" value={location.home_zip} onChange={(e) => setLocation({ ...location, home_zip: e.target.value })} className="notebook-input notebook-input-small" placeholder="ZIP" aria-label="ZIP" />
+            <button data-testid="save-location" type="submit" className="notebook-add-btn">Save</button>
+          </form>
+          {locationMessage && <p className="notebook-saved">{locationMessage}</p>}
+        </footer>
+      </article>
 
       {showCreate && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
           <form onSubmit={createList} className="bg-white rounded-xl max-w-md w-full p-6 space-y-4">
             <h3 className="text-xl font-semibold">New list</h3>
             <input data-testid="list-name" value={newListName} onChange={(e) => setNewListName(e.target.value)} className={fieldClass} placeholder="Weekly groceries" required />

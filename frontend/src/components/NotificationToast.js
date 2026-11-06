@@ -33,10 +33,10 @@ const NotificationToast = ({ message, type = 'info', duration = 5000, onClose })
   };
 
   return (
-    <div className={`fixed top-4 right-4 z-50 transform transition-all duration-300 ${
-      isExiting ? 'translate-x-full opacity-0' : 'translate-x-0 opacity-100'
+    <div className={`transform transition-all duration-300 ${
+      isExiting ? 'translate-y-3 opacity-0' : 'translate-y-0 opacity-100'
     }`}>
-      <div className={`${typeStyles[type]} text-white px-6 py-4 rounded-lg shadow-lg border-l-4 min-w-80 max-w-96`}>
+      <div className={`${typeStyles[type]} text-white px-4 py-3 rounded-lg shadow-lg border-l-4 max-w-sm`}>
         <div className="flex items-center">
           <span className="text-lg mr-3">{icons[type]}</span>
           <p className="font-medium">{message}</p>
@@ -61,7 +61,7 @@ const NotificationToast = ({ message, type = 'info', duration = 5000, onClose })
 // Toast container component to manage multiple toasts
 export const ToastContainer = ({ toasts, removeToast }) => {
   return (
-    <div className="fixed top-4 right-4 z-50 space-y-2">
+    <div className="fixed bottom-4 left-1/2 z-50 w-[min(100%-1.5rem,24rem)] -translate-x-1/2 space-y-2">
       {toasts.map((toast) => (
         <NotificationToast
           key={toast.id}

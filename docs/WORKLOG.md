@@ -10,4 +10,9 @@ Pilot behavior now: household register, login, create, share, add, check off, an
 
 Tests and a two-session browser pass against the production build are recorded in `docs/EVIDENCE.md`. MongoDB 8.0.12 was installed locally because it was not already on the machine. No external account, email provider, or payment provider was used.
 
+## 2026-11-06
+
+Restyled the household pages as a lined notebook. Each item is a ruled line with a checkbox and a Prices dropdown. Checking the box keeps the line on the page and draws a line through the writing. The dropdown shows example retailer prices and whether the package actually matches. Retailer screens, privacy, and the live event stream are unchanged.
+
 Signed: Shoppy | 2026-11-05
+Signed: Shoppy | 2026-11-06
