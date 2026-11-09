@@ -20,6 +20,8 @@ Added GitHub Actions for the pytest suite against MongoDB 8 and a Node 22 produc
 
 Fixed one-process live updates so a dropped stream or a full queue reloads that household's own lists and items from the API. The reload ignores an older response if a newer one is already in flight. Overflow no longer drops the last signal. Retailer accounts still cannot open the event stream. Notebook layout was left as approved.
 
+The first CI attempt failed because MongoDB 8.0 will not start on the GitHub-hosted kernel. MongoDB 7.0 started, and both the push and pull request checks passed. See `docs/EVIDENCE.md`.
+
 Signed: Shoppy | 2026-11-05
 Signed: Shoppy | 2026-11-06
 Signed: Shoppy | 2026-11-09

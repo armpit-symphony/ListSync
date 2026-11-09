@@ -12,7 +12,12 @@ Fresh run on the reconnect and CI change, before that commit was pushed:
 
 Screenshots: `docs/evidence/reconnect-dropped.png`, `reconnect-caught-up.png`, `reconnect-new-list.png`.
 
-GitHub Actions is in `.github/workflows/ci.yml`. The result of the run on this commit is recorded after push. There is still no hosted deployment.
+GitHub Actions on `4ddf19b6ddfc4de6ae62b95637dd06071acb1ef8`:
+
+- Push run https://github.com/armpit-symphony/ListSync/actions/runs/42551703484 passed. Backend pytest 51s, frontend build 25s.
+- Pull request run https://github.com/armpit-symphony/ListSync/actions/runs/42551707485 passed. Backend pytest 54s, frontend build 24s.
+
+An earlier run on `409737a` failed because the `mongo:8.0` container exits on the GitHub runner kernel (SERVER-121912). The workflow now uses MongoDB 7.0, and that job did run the suite. Reading the repository Actions permission API returned 403, but the workflows were allowed to run. No repository settings were changed. There is still no hosted deployment.
 
 ## 5–6 November 2026
 
