@@ -57,7 +57,7 @@ Development mode is `yarn start` in `frontend/`. The supported install path is Y
 
 `.github/workflows/ci.yml` runs on pull requests and on pushes to `main` and `cursor/**`.
 
-- Backend: Python 3.12, `pip install -r backend/requirements-dev.txt`, then `pytest tests/test_pilot_api.py tests/test_live_server.py` against a `mongo:8.0` service. The job fails if MongoDB does not become healthy.
+- Backend: Python 3.12, `pip install -r backend/requirements-dev.txt`, then `pytest tests/test_pilot_api.py tests/test_live_server.py` against a `mongo:7.0` service. The job fails if MongoDB does not become healthy. MongoDB 8.0 refuses to start on the kernel used by current GitHub-hosted runners (kernel 6.19 through 7.0.13, SERVER-121912). MongoDB 7.0 is a real server, not a skipped test. Local checks have also used MongoDB 8.0.12 on kernel 6.12.
 - Frontend: Node.js 22, `yarn install --frozen-lockfile`, then `CI=true yarn build`.
 
 No paid services are required. The workflow does not change repository settings.
