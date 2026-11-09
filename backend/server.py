@@ -5,7 +5,7 @@ free. Retailer subscription billing, outgoing email, the admin console, and
 live shelf prices are intentionally disabled in this pilot.
 """
 
-from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi import FastAPI, HTTPException, Depends, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -22,6 +22,10 @@ import json
 import uuid
 import asyncio
 import time
+import secrets
+import hashlib
+import smtplib
+from email.message import EmailMessage
 from typing import List, Optional, Dict, Set
 from enum import Enum
 
@@ -161,11 +165,21 @@ store_products_collection = db.store_products
 store_locations_collection = db.store_locations
 admin_users_collection = db.admin_users
 payment_config_collection = db.payment_config
+invites_collection = db.list_invites
+password_resets_collection = db.password_resets
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
 
 _listeners: Dict[str, Set[asyncio.Queue]] = {}
+_reset_ip_hits: Dict[str, List[datetime]] = {}
+INVITE_DAYS = 7
+RESET_HOURS = 1
+RESET_ACCOUNT_LIMIT = 3
+RESET_IP_LIMIT = 10
+FORGOT_MESSAGE = "If an account exists for that email, password reset instructions were sent."
+INVITE_UNUSABLE = "This invite is not usable."
+RESET_UNUSABLE = "This reset link is not usable."
 
 
 def ensure_indexes():
@@ -179,6 +193,10 @@ def ensure_indexes():
     items_collection.create_index("list_id")
     store_products_collection.create_index("id", unique=True)
     store_products_collection.create_index([("name_key", 1), ("is_advertised", 1)])
+    invites_collection.create_index("token_hash", unique=True)
+    invites_collection.create_index("list_id")
+    password_resets_collection.create_index("token_hash", unique=True)
+    password_resets_collection.create_index([("user_id", 1), ("created_at", 1)])
 
 
 ensure_indexes()
@@ -440,6 +458,56 @@ def get_password_hash(password):
     return pwd_context.hash(password)
 
 
+def hash_token(raw: str) -> str:
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def new_secret_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def household_token(user_id: str, token_version: int = 0) -> str:
+    return create_access_token(
+        data={"sub": user_id, "user_type": "household", "tv": int(token_version or 0)},
+        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
+    )
+
+
+def first_name(full_name: Optional[str]) -> str:
+    parts = (full_name or "").strip().split()
+    return parts[0] if parts else "Someone"
+
+
+def public_origin() -> str:
+    return os.environ.get("PUBLIC_ORIGIN", "https://listsync.sparkpitlabs.com").rstrip("/")
+
+
+def smtp_configured() -> bool:
+    return bool(os.environ.get("SMTP_HOST", "").strip())
+
+
+def send_reset_email(to_email: str, link: str) -> None:
+    """Send a reset link only when SMTP is configured. Never log the link."""
+    if not smtp_configured():
+        return
+    message = EmailMessage()
+    message["Subject"] = "Reset your ListSync password"
+    message["From"] = os.environ.get("SMTP_FROM", "noreply@listsync.sparkpitlabs.com")
+    message["To"] = to_email
+    message.set_content(
+        "Use this one-time link to choose a new ListSync password. It expires in one hour.\n\n"
+        f"{link}\n"
+    )
+    port = int(os.environ.get("SMTP_PORT", "587"))
+    with smtplib.SMTP(os.environ["SMTP_HOST"], port, timeout=20) as smtp:
+        smtp.starttls()
+        user = os.environ.get("SMTP_USER", "").strip()
+        password = os.environ.get("SMTP_PASSWORD", "")
+        if user:
+            smtp.login(user, password)
+        smtp.send_message(message)
+
+
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
     expire = datetime.utcnow() + (
@@ -523,6 +591,16 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
 
     if user is None:
         raise credentials_exception
+
+    if user_type == "household":
+        current_version = int(user.get("token_version") or 0)
+        claimed = payload.get("tv", 0)
+        try:
+            claimed = int(claimed)
+        except (TypeError, ValueError):
+            raise credentials_exception
+        if claimed != current_version:
+            raise credentials_exception
 
     user = without_mongo_id(user)
     user["user_type"] = user_type
@@ -808,7 +886,7 @@ async def health_check():
         "pilot": True,
         "billing_implemented": False,
         "admin_console": False,
-        "outgoing_email": False,
+        "outgoing_email": smtp_configured(),
     }
 
 
@@ -845,6 +923,7 @@ async def register(user_data: UserCreate):
         "home_zip": None,
         "home_city": None,
         "home_state": None,
+        "token_version": 0,
         "created_at": datetime.utcnow(),
     }
     try:
@@ -852,10 +931,7 @@ async def register(user_data: UserCreate):
     except DuplicateKeyError:
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    access_token = create_access_token(
-        data={"sub": user_id, "user_type": "household"},
-        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
-    )
+    access_token = household_token(user_id, 0)
     return {"access_token": access_token, "token_type": "bearer", "user_type": "household"}
 
 
@@ -868,10 +944,7 @@ async def login(user_credentials: UserLogin):
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    access_token = create_access_token(
-        data={"sub": user["id"], "user_type": "household"},
-        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
-    )
+    access_token = household_token(user["id"], int(user.get("token_version") or 0))
     return {"access_token": access_token, "token_type": "bearer", "user_type": "household"}
 
 
@@ -1202,6 +1275,224 @@ async def share_list(list_id: str, share_request: ShareListRequest, current_user
     listeners = list(dict.fromkeys(member_ids(shopping_list) + [target_user["id"]]))
     publish(listeners, {"type": "lists.changed", "list_id": list_id, "action": "shared"})
     return {"message": "List shared successfully"}
+
+
+def invite_is_open(invite: Optional[dict], now: Optional[datetime] = None) -> bool:
+    if not invite:
+        return False
+    now = now or datetime.utcnow()
+    if invite.get("used_at") or invite.get("revoked_at"):
+        return False
+    expires_at = invite.get("expires_at")
+    return bool(expires_at and expires_at > now)
+
+
+def add_member(shopping_list: dict, user_id: str):
+    if user_id == shopping_list["created_by"]:
+        return
+    if user_id not in (shopping_list.get("shared_with") or []):
+        lists_collection.update_one({"id": shopping_list["id"]}, {"$addToSet": {"shared_with": user_id}})
+        shopping_list.setdefault("shared_with", []).append(user_id)
+
+
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str
+    password: str
+
+
+def recent_reset_count(user_id: str) -> int:
+    since = datetime.utcnow() - timedelta(hours=RESET_HOURS)
+    return password_resets_collection.count_documents({"user_id": user_id, "created_at": {"$gte": since}})
+
+
+def ip_is_limited(ip: str) -> bool:
+    now = datetime.utcnow()
+    window_start = now - timedelta(hours=RESET_HOURS)
+    hits = [stamp for stamp in _reset_ip_hits.get(ip, []) if stamp >= window_start]
+    if len(hits) >= RESET_IP_LIMIT:
+        _reset_ip_hits[ip] = hits
+        return True
+    hits.append(now)
+    _reset_ip_hits[ip] = hits
+    return False
+
+
+def issue_password_reset(email: str, reveal: bool = False):
+    """Create a one-time reset. reveal=True is only for the operator CLI."""
+    user = users_collection.find_one({"email": email.lower()})
+    if not user:
+        return None
+    if recent_reset_count(user["id"]) >= RESET_ACCOUNT_LIMIT:
+        return "limited" if reveal else None
+    raw = new_secret_token()
+    password_resets_collection.insert_one(
+        {
+            "id": str(uuid.uuid4()),
+            "user_id": user["id"],
+            "token_hash": hash_token(raw),
+            "expires_at": datetime.utcnow() + timedelta(hours=RESET_HOURS),
+            "used_at": None,
+            "created_at": datetime.utcnow(),
+        }
+    )
+    link = f"{public_origin()}/reset/{raw}"
+    if reveal:
+        return link
+    try:
+        send_reset_email(user["email"], link)
+    except Exception:
+        # The HTTP caller still gets the generic response. The link is not logged.
+        pass
+    return True
+
+
+def apply_new_password(user: dict, new_password: str) -> str:
+    version = int(user.get("token_version") or 0) + 1
+    users_collection.update_one(
+        {"id": user["id"]},
+        {"$set": {"password_hash": get_password_hash(new_password), "token_version": version}},
+    )
+    return household_token(user["id"], version)
+
+
+@app.post("/api/auth/forgot-password")
+async def forgot_password(body: PasswordResetRequest, request: Request):
+    ip = request.client.host if request.client else "unknown"
+    if not ip_is_limited(ip):
+        issue_password_reset(str(body.email), reveal=False)
+    return {"message": FORGOT_MESSAGE}
+
+
+@app.post("/api/auth/reset-password", response_model=Token)
+async def reset_password(body: PasswordResetConfirm):
+    digest = hash_token(body.token)
+    reset = password_resets_collection.find_one_and_update(
+        {"token_hash": digest, "used_at": None, "expires_at": {"$gt": datetime.utcnow()}},
+        {"$set": {"used_at": datetime.utcnow()}},
+    )
+    if not reset:
+        raise HTTPException(status_code=400, detail=RESET_UNUSABLE)
+    user = users_collection.find_one({"id": reset["user_id"]})
+    if not user:
+        raise HTTPException(status_code=400, detail=RESET_UNUSABLE)
+    access_token = apply_new_password(user, body.password)
+    return {"access_token": access_token, "token_type": "bearer", "user_type": "household"}
+
+
+@app.post("/api/auth/change-password", response_model=Token)
+async def change_password(body: PasswordChange, current_user=Depends(get_current_user)):
+    require_household(current_user)
+    if not verify_password(body.current_password, current_user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Incorrect password")
+    access_token = apply_new_password(current_user, body.new_password)
+    return {"access_token": access_token, "token_type": "bearer", "user_type": "household"}
+
+
+@app.post("/api/lists/{list_id}/invites")
+async def create_invite(list_id: str, current_user=Depends(get_current_user)):
+    shopping_list = load_list_for_owner(list_id, current_user)
+    raw = new_secret_token()
+    invite_id = str(uuid.uuid4())
+    expires_at = datetime.utcnow() + timedelta(days=INVITE_DAYS)
+    invites_collection.insert_one(
+        {
+            "id": invite_id,
+            "list_id": shopping_list["id"],
+            "created_by": current_user["id"],
+            "token_hash": hash_token(raw),
+            "expires_at": expires_at,
+            "used_at": None,
+            "used_by": None,
+            "revoked_at": None,
+            "created_at": datetime.utcnow(),
+        }
+    )
+    return {
+        "id": invite_id,
+        "token": raw,
+        "path": f"/invite/{raw}",
+        "expires_at": expires_at,
+    }
+
+
+@app.get("/api/lists/{list_id}/invites")
+async def list_invites(list_id: str, current_user=Depends(get_current_user)):
+    load_list_for_owner(list_id, current_user)
+    rows = list(invites_collection.find({"list_id": list_id}).sort("created_at", -1))
+    return [
+        {
+            "id": row["id"],
+            "created_at": row["created_at"],
+            "expires_at": row["expires_at"],
+            "used": bool(row.get("used_at")),
+            "revoked": bool(row.get("revoked_at")),
+        }
+        for row in rows
+    ]
+
+
+@app.post("/api/lists/{list_id}/invites/{invite_id}/revoke")
+async def revoke_invite(list_id: str, invite_id: str, current_user=Depends(get_current_user)):
+    load_list_for_owner(list_id, current_user)
+    result = invites_collection.update_one(
+        {"id": invite_id, "list_id": list_id, "used_at": None, "revoked_at": None},
+        {"$set": {"revoked_at": datetime.utcnow()}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Invite not found")
+    return {"message": "Invite revoked"}
+
+
+def lookup_invite(raw_token: str):
+    return invites_collection.find_one({"token_hash": hash_token(raw_token)})
+
+
+@app.get("/api/invites/{token}")
+async def preview_invite(token: str):
+    invite = lookup_invite(token)
+    if not invite_is_open(invite):
+        return {"valid": False, "message": INVITE_UNUSABLE}
+    owner = users_collection.find_one({"id": invite["created_by"]})
+    name = first_name(owner.get("name") if owner else None)
+    return {"valid": True, "owner_first_name": name, "message": f"Join {name}'s list"}
+
+
+@app.post("/api/invites/{token}/accept")
+async def accept_invite(token: str, current_user=Depends(get_current_user)):
+    if current_user.get("user_type") != "household":
+        raise HTTPException(status_code=403, detail="Retailer accounts cannot join a household list.")
+    invite = invites_collection.find_one_and_update(
+        {
+            "token_hash": hash_token(token),
+            "used_at": None,
+            "revoked_at": None,
+            "expires_at": {"$gt": datetime.utcnow()},
+        },
+        {"$set": {"used_at": datetime.utcnow(), "used_by": current_user["id"]}},
+    )
+    if not invite:
+        raise HTTPException(status_code=400, detail=INVITE_UNUSABLE)
+    shopping_list = lists_collection.find_one({"id": invite["list_id"]})
+    if not shopping_list:
+        raise HTTPException(status_code=400, detail=INVITE_UNUSABLE)
+    if current_user["id"] == shopping_list["created_by"]:
+        invites_collection.update_one({"id": invite["id"]}, {"$set": {"used_at": None, "used_by": None}})
+        raise HTTPException(status_code=400, detail="You already have this list.")
+    add_member(shopping_list, current_user["id"])
+    publish(
+        member_ids(shopping_list) + [current_user["id"]],
+        {"type": "lists.changed", "list_id": shopping_list["id"], "action": "shared"},
+    )
+    return {"list_id": shopping_list["id"], "name": shopping_list["name"]}
 
 
 @app.delete("/api/lists/{list_id}")

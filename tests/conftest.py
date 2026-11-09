@@ -27,9 +27,12 @@ def clean_database():
         server.store_products_collection,
         server.admin_users_collection,
         server.payment_config_collection,
+        server.invites_collection,
+        server.password_resets_collection,
     ):
         collection.delete_many({})
     server._listeners.clear()
+    server._reset_ip_hits.clear()
     yield
     server._listeners.clear()
 

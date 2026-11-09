@@ -34,7 +34,7 @@ jobs:
           SECRET_KEY: ci-secret-key-not-a-default-value-0123456789
           DB_NAME: listsync_pilot_test
           CORS_ORIGINS: http://localhost:3000
-        run: python -m pytest tests/test_pilot_api.py tests/test_live_server.py -q --tb=short
+        run: python -m pytest tests/test_pilot_api.py tests/test_live_server.py tests/test_access_links.py -q --tb=short
 
   frontend:
     name: Frontend production build

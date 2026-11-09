@@ -167,7 +167,38 @@ sudo nginx -t && sudo systemctl reload nginx
 docker compose -p listsync -f deploy/docker-compose.prod.yml stop
 ```
 
-## 10. What not to do
+## 10. Upgrade
+
+From the checkout on the droplet. Do not change other sites' nginx files.
+
+```sh
+cd /opt/listsync
+git pull
+```
+
+Add any new keys from `deploy/.env.example` to the server's `deploy/.env`. For this release those are:
+
+- `PUBLIC_ORIGIN` — `https://listsync.sparkpitlabs.com`. The operator reset command and reset email use it. Invite links use the browser's own origin.
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` — optional. Leave `SMTP_HOST` empty if mail is not set up. Forgot-password still answers with the same generic sentence and does not reveal a link.
+
+Then rebuild and restart the stack. The Mongo volume stays.
+
+```sh
+docker compose -p listsync -f deploy/docker-compose.prod.yml --env-file deploy/.env up -d --build
+curl -fsS http://127.0.0.1:8510/api/health
+```
+
+Reload host nginx only if `deploy/nginx/listsync.sparkpitlabs.com.conf` changed, and only after `sudo nginx -t`.
+
+Password reset when mail is not configured. This prints one link. Text it to the person. It works once and expires in one hour. The forgot-password page never shows the link.
+
+```sh
+docker compose -p listsync -f deploy/docker-compose.prod.yml exec api python -m tools.reset_link person@example.com
+```
+
+Existing household sign-ins stay valid until that person resets or changes their password. After either, older sessions must sign in again.
+
+## 11. What not to do
 
 - Do not publish MongoDB.
 - Do not set uvicorn `--workers` above 1.

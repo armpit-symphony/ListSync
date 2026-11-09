@@ -66,8 +66,8 @@ const LandingPage = ({ onHouseholdLogin, onStoreLogin }) => (
           </button>
         </div>
       </div>
-      <p className="mt-8 text-blue-100 text-sm">
-        Admin console, payment processing, and outgoing email are turned off for this pilot.
+        <p className="mt-8 text-blue-100 text-sm">
+        Admin console and payment processing are turned off. Password reset email sends only when SMTP is configured.
       </p>
     </div>
   </div>
@@ -80,7 +80,7 @@ const AuthError = ({ error }) =>
     </div>
   ) : null;
 
-const HouseholdLogin = ({ onLoginSuccess, switchToRegister, onBack }) => {
+const HouseholdLogin = ({ onLoginSuccess, switchToRegister, onForgot, onBack }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -121,7 +121,10 @@ const HouseholdLogin = ({ onLoginSuccess, switchToRegister, onBack }) => {
             {loading ? 'Signing in...' : 'Sign in'}
           </button>
         </form>
-        <button data-testid="auth-switch" type="button" onClick={switchToRegister} className="mt-4 text-blue-600 font-semibold">
+        <button data-testid="forgot-password" type="button" onClick={onForgot} className="mt-4 text-sm text-gray-600 underline">
+          Forgot password?
+        </button>
+        <button data-testid="auth-switch" type="button" onClick={switchToRegister} className="mt-4 block text-blue-600 font-semibold">
           Create a household account
         </button>
       </div>
@@ -317,9 +320,14 @@ const ShoppingListView = ({ list, onBack }) => {
     quantity_count: '1',
   });
   const [showShare, setShowShare] = useState(false);
+  const [showInvite, setShowInvite] = useState(false);
+  const [inviteLink, setInviteLink] = useState('');
+  const [inviteNote, setInviteNote] = useState('');
+  const [invites, setInvites] = useState([]);
   const [shareEmail, setShareEmail] = useState('');
   const [shareError, setShareError] = useState('');
   const [formError, setFormError] = useState('');
+  const [isOwner, setIsOwner] = useState(false);
   const [openIds, setOpenIds] = useState({});
   const [pricesByItem, setPricesByItem] = useState({});
   const [priceError, setPriceError] = useState({});
@@ -399,6 +407,20 @@ const ShoppingListView = ({ list, onBack }) => {
       stop();
     };
   }, [list.id]);
+
+  useEffect(() => {
+    let active = true;
+    apiCall('/api/auth/me')
+      .then((me) => {
+        if (active) setIsOwner(me.id === list.created_by);
+      })
+      .catch(() => {
+        if (active) setIsOwner(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [list.created_by]);
 
   const addItem = async (event) => {
     event.preventDefault();
@@ -572,9 +594,28 @@ const ShoppingListView = ({ list, onBack }) => {
         <header className="notebook-head">
           <div className="notebook-head-row">
             <button type="button" onClick={onBack} className="notebook-text-btn">← All lists</button>
-            <button type="button" data-testid="share-list" onClick={() => setShowShare(true)} className="notebook-text-btn">
-              Share
-            </button>
+            <div className="flex gap-2">
+              {isOwner && (
+                <button
+                  type="button"
+                  data-testid="invite-list"
+                  onClick={async () => {
+                    setShowInvite(true);
+                    try {
+                      setInvites(await apiCall(`/api/lists/${list.id}/invites`));
+                    } catch (err) {
+                      setInviteNote(err.message);
+                    }
+                  }}
+                  className="notebook-text-btn"
+                >
+                  Invite
+                </button>
+              )}
+              <button type="button" data-testid="share-list" onClick={() => setShowShare(true)} className="notebook-text-btn">
+                Share
+              </button>
+            </div>
           </div>
           <h1 className="notebook-title">{list.name}</h1>
           <p className="notebook-subtitle">
@@ -611,6 +652,93 @@ const ShoppingListView = ({ list, onBack }) => {
           <p>Implemented: {basket?.implemented ? 'yes' : 'no'}. Offers: none.</p>
         </footer>
       </article>
+
+      {showInvite && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+          <div className="notebook-sheet max-w-md w-full p-6 space-y-4">
+            <h3 className="notebook-title text-2xl">Invite</h3>
+            <p className="notebook-subtitle">One link, one person, seven days. It does not show the list until they join.</p>
+            <button
+              type="button"
+              data-testid="create-invite"
+              className="notebook-add-btn"
+              onClick={async () => {
+                setInviteNote('');
+                try {
+                  const created = await apiCall(`/api/lists/${list.id}/invites`, { method: 'POST' });
+                  setInviteLink(`${window.location.origin}/invite/${created.token}`);
+                  setInvites(await apiCall(`/api/lists/${list.id}/invites`));
+                } catch (err) {
+                  setInviteNote(err.message);
+                }
+              }}
+            >
+              Create invite link
+            </button>
+            {inviteLink && (
+              <>
+                <input data-testid="invite-link" readOnly value={inviteLink} className="notebook-input notebook-input-small" />
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    data-testid="invite-copy"
+                    className="notebook-text-btn"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(inviteLink);
+                        setInviteNote('Copied');
+                      } catch (err) {
+                        setInviteNote('Copy the link from the box');
+                      }
+                    }}
+                  >
+                    Copy
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="invite-share"
+                    className="notebook-text-btn"
+                    onClick={async () => {
+                      if (navigator.share) {
+                        try {
+                          await navigator.share({ title: "Join my ListSync list", url: inviteLink });
+                          return;
+                        } catch (err) {
+                          if (err && err.name === 'AbortError') return;
+                        }
+                      }
+                      try {
+                        await navigator.clipboard.writeText(inviteLink);
+                        setInviteNote('Copied');
+                      } catch (err) {
+                        setInviteNote('Copy the link from the box');
+                      }
+                    }}
+                  >
+                    Share
+                  </button>
+                </div>
+              </>
+            )}
+            {invites.filter((row) => !row.used && !row.revoked).map((row) => (
+              <button
+                key={row.id}
+                type="button"
+                className="notebook-text-btn"
+                onClick={async () => {
+                  await apiCall(`/api/lists/${list.id}/invites/${row.id}/revoke`, { method: 'POST' });
+                  setInvites(await apiCall(`/api/lists/${list.id}/invites`));
+                  setInviteNote('Invite revoked');
+                }}
+              >
+                Revoke
+              </button>
+            ))}
+            {inviteNote && <p className="notebook-subtitle">{inviteNote}</p>}
+            <button type="button" className="notebook-text-btn" onClick={() => setShowInvite(false)}>Close</button>
+          </div>
+        </div>
+      )}
 
       {showShare && (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
@@ -766,6 +894,7 @@ const HouseholdDashboard = ({ onSelectList, onLogout }) => {
             <button data-testid="save-location" type="submit" className="notebook-add-btn">Save</button>
           </form>
           {locationMessage && <p className="notebook-saved">{locationMessage}</p>}
+          <ChangePassword />
         </footer>
       </article>
 
@@ -983,6 +1112,198 @@ const StoreDashboard = ({ onLogout }) => {
   );
 };
 
+const ChangePassword = () => {
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+
+  const submit = async (event) => {
+    event.preventDefault();
+    setError('');
+    setMessage('');
+    try {
+      const response = await apiCall('/api/auth/change-password', {
+        method: 'POST',
+        body: { current_password: currentPassword, new_password: newPassword },
+      });
+      localStorage.setItem('token', response.access_token);
+      localStorage.setItem('userType', response.user_type);
+      setCurrentPassword('');
+      setNewPassword('');
+      setMessage('Password changed. Other sessions need to sign in again.');
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="mt-4 space-y-2" data-testid="change-password">
+      <p className="notebook-foot-title">Change password</p>
+      <input data-testid="current-password" type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} className="notebook-input notebook-input-small" placeholder="Current password" required />
+      <input data-testid="new-password" type="password" minLength={8} value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="notebook-input notebook-input-small" placeholder="New password" required />
+      {error && <p className="notebook-warn">{error}</p>}
+      {message && <p className="notebook-saved">{message}</p>}
+      <button type="submit" className="notebook-add-btn">Save password</button>
+    </form>
+  );
+};
+
+const ForgotPassword = ({ onBack }) => {
+  const [email, setEmail] = useState('');
+  const [message, setMessage] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const submit = async (event) => {
+    event.preventDefault();
+    setLoading(true);
+    try {
+      const response = await apiCall('/api/auth/forgot-password', { method: 'POST', body: { email } });
+      setMessage(response.message);
+    } catch (err) {
+      setMessage('If an account exists for that email, password reset instructions were sent.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="notebook-desk flex items-center justify-center p-4">
+      <form onSubmit={submit} className="notebook-sheet max-w-md w-full p-6 space-y-4">
+        <button type="button" onClick={onBack} className="notebook-text-btn">← Back</button>
+        <h1 className="notebook-title text-3xl">Forgot password</h1>
+        <p className="notebook-subtitle">We will not say whether that email has an account.</p>
+        <input data-testid="forgot-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="notebook-input notebook-input-small" placeholder="Email" required />
+        {message && <p data-testid="forgot-message" className="notebook-subtitle">{message}</p>}
+        <button data-testid="forgot-submit" type="submit" disabled={loading} className="notebook-add-btn">Send reset</button>
+      </form>
+    </div>
+  );
+};
+
+const ResetPassword = ({ token, onDone }) => {
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+
+  const submit = async (event) => {
+    event.preventDefault();
+    setError('');
+    try {
+      const response = await apiCall('/api/auth/reset-password', {
+        method: 'POST',
+        body: { token, password },
+      });
+      localStorage.setItem('token', response.access_token);
+      localStorage.setItem('userType', response.user_type);
+      window.history.replaceState({}, '', '/');
+      onDone();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  return (
+    <div className="notebook-desk flex items-center justify-center p-4">
+      <form onSubmit={submit} className="notebook-sheet max-w-md w-full p-6 space-y-4">
+        <h1 className="notebook-title text-3xl">New password</h1>
+        <input data-testid="reset-password" type="password" minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} className="notebook-input notebook-input-small" placeholder="New password" required />
+        {error && <p className="notebook-warn">{error}</p>}
+        <button data-testid="reset-submit" type="submit" className="notebook-add-btn">Save password</button>
+      </form>
+    </div>
+  );
+};
+
+const InviteAuth = ({ mode, setMode, onRegister, onLogin }) => {
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const submit = async (event) => {
+    event.preventDefault();
+    setLoading(true);
+    setError('');
+    try {
+      const response = await apiCall(mode === 'register' ? '/api/auth/register' : '/api/auth/login', {
+        method: 'POST',
+        body: mode === 'register' ? { name, email, password } : { email, password },
+      });
+      localStorage.setItem('token', response.access_token);
+      localStorage.setItem('userType', response.user_type);
+      if (mode === 'register') onRegister();
+      else onLogin();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="mt-4 space-y-3">
+      {mode === 'register' && (
+        <input data-testid="auth-name" value={name} onChange={(e) => setName(e.target.value)} className="notebook-input notebook-input-small" placeholder="Your name" required />
+      )}
+      <input data-testid="auth-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="notebook-input notebook-input-small" placeholder="Email" required />
+      <input data-testid="auth-password" type="password" minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} className="notebook-input notebook-input-small" placeholder="Password" required />
+      {error && <p data-testid="form-error" className="notebook-warn">{error}</p>}
+      <button data-testid="auth-submit" type="submit" disabled={loading} className="notebook-add-btn">
+        {mode === 'register' ? 'Create account and join' : 'Sign in and join'}
+      </button>
+      <button data-testid="auth-switch" type="button" className="notebook-text-btn" onClick={() => setMode(mode === 'register' ? 'login' : 'register')}>
+        {mode === 'register' ? 'I already have an account' : 'Create an account'}
+      </button>
+    </form>
+  );
+};
+
+const InviteJoin = ({ token, signedIn, userType, onRegister, onLogin, onAccept, onLeave }) => {
+  const [preview, setPreview] = useState(null);
+  const [mode, setMode] = useState('register');
+
+  useEffect(() => {
+    let active = true;
+    apiCall(`/api/invites/${token}`)
+      .then((row) => { if (active) setPreview(row); })
+      .catch(() => { if (active) setPreview({ valid: false, message: 'This invite is not usable.' }); });
+    return () => { active = false; };
+  }, [token]);
+
+  if (!preview) {
+    return <div className="notebook-desk flex items-center justify-center"><LoadingSpinner message="Opening the invite..." /></div>;
+  }
+
+  return (
+    <div className="notebook-desk flex items-center justify-center p-4">
+      <div className="notebook-sheet max-w-md w-full p-6" data-testid="invite-join">
+        <button type="button" onClick={onLeave} className="notebook-text-btn mb-4">← Back</button>
+        <h1 data-testid="join-title" className="notebook-title text-3xl">
+          {preview.valid ? preview.message : 'Invite unavailable'}
+        </h1>
+        {!preview.valid && <p className="notebook-subtitle">{preview.message}</p>}
+        {preview.valid && signedIn && userType === 'store' && (
+          <p className="notebook-warn">Retailer accounts cannot join a household list.</p>
+        )}
+        {preview.valid && signedIn && userType === 'household' && (
+          <button data-testid="accept-invite" type="button" className="notebook-add-btn mt-4" onClick={onAccept}>
+            Join this list
+          </button>
+        )}
+        {preview.valid && !signedIn && (
+          <InviteAuth mode={mode} setMode={setMode} onRegister={onRegister} onLogin={onLogin} />
+        )}
+      </div>
+    </div>
+  );
+};
+
+function pathToken(prefix) {
+  const match = window.location.pathname.match(new RegExp(`^/${prefix}/([A-Za-z0-9_-]{20,})$`));
+  return match ? match[1] : '';
+}
+
 function App() {
   const [currentView, setCurrentView] = useState('landing');
   const [authState, setAuthState] = useState('login');
@@ -990,6 +1311,10 @@ function App() {
   const [userType, setUserType] = useState(null);
   const [selectedList, setSelectedList] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [pendingInvite, setPendingInvite] = useState(() => pathToken('invite'));
+  const [resetToken, setResetToken] = useState(() => pathToken('reset'));
+  const [autoAccept, setAutoAccept] = useState(false);
+  const acceptingInvite = useRef(false);
   const { toasts, removeToast, success, info } = useToast();
 
   useEffect(() => {
@@ -1008,10 +1333,43 @@ function App() {
     setLoading(false);
   }, []);
 
+  const acceptPendingInvite = async () => {
+    const result = await apiCall(`/api/invites/${pendingInvite}/accept`, { method: 'POST' });
+    const list = await apiCall(`/api/lists/${result.list_id}`);
+    setSelectedList(list);
+    setPendingInvite('');
+    setAutoAccept(false);
+    window.history.replaceState({}, '', '/');
+  };
+
+  useEffect(() => {
+    if (!autoAccept || !isAuthenticated || userType !== 'household' || !pendingInvite) return;
+    if (acceptingInvite.current) return;
+    acceptingInvite.current = true;
+    const token = pendingInvite;
+    (async () => {
+      try {
+        const result = await apiCall(`/api/invites/${token}/accept`, { method: 'POST' });
+        const list = await apiCall(`/api/lists/${result.list_id}`);
+        setSelectedList(list);
+        setPendingInvite('');
+        setAutoAccept(false);
+        window.history.replaceState({}, '', '/');
+      } catch (err) {
+        acceptingInvite.current = false;
+        info(err.message);
+      }
+    })();
+  }, [autoAccept, isAuthenticated, userType, pendingInvite, info]);
+
   const handleAuthSuccess = (type) => {
     setIsAuthenticated(true);
     setUserType(type);
-    setSelectedList(null);
+    if (pendingInvite && type === 'household') {
+      setAutoAccept(true);
+    } else {
+      setSelectedList(null);
+    }
     success('Signed in to ListSync.');
   };
 
@@ -1035,7 +1393,44 @@ function App() {
   }
 
   let screen = null;
-  if (!isAuthenticated && currentView === 'landing') {
+  if (resetToken) {
+    screen = (
+      <ResetPassword
+        token={resetToken}
+        onDone={() => {
+          setResetToken('');
+          setIsAuthenticated(true);
+          setUserType('household');
+          setCurrentView('household');
+        }}
+      />
+    );
+  } else if (pendingInvite && !(isAuthenticated && userType === 'household' && selectedList && !autoAccept)) {
+    screen = (
+      <InviteJoin
+        token={pendingInvite}
+        signedIn={isAuthenticated}
+        userType={userType}
+        onRegister={() => {
+          setAutoAccept(true);
+          handleAuthSuccess('household');
+        }}
+        onLogin={() => {
+          setAutoAccept(true);
+          handleAuthSuccess('household');
+        }}
+        onAccept={() => {
+          acceptPendingInvite().catch((err) => info(err.message));
+        }}
+        onLeave={() => {
+          setPendingInvite('');
+          window.history.replaceState({}, '', '/');
+        }}
+      />
+    );
+  } else if (!isAuthenticated && currentView === 'forgot-password') {
+    screen = <ForgotPassword onBack={() => setCurrentView('household-login')} />;
+  } else if (!isAuthenticated && currentView === 'landing') {
     screen = (
       <LandingPage
         onHouseholdLogin={() => {
@@ -1053,6 +1448,7 @@ function App() {
       <HouseholdLogin
         onLoginSuccess={handleAuthSuccess}
         switchToRegister={() => setAuthState('register')}
+        onForgot={() => setCurrentView('forgot-password')}
         onBack={() => setCurrentView('landing')}
       />
     ) : (
