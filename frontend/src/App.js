@@ -324,50 +324,73 @@ const ShoppingListView = ({ list, onBack }) => {
   const [pricesByItem, setPricesByItem] = useState({});
   const [priceError, setPriceError] = useState({});
   const openIdsRef = useRef({});
+  const refreshGen = useRef(0);
+  const refreshRef = useRef(async () => {});
 
   const loadPricesFor = async (itemId) => {
     try {
       const prices = await apiCall(`/api/lists/${list.id}/items/${itemId}/example-prices`);
-      setPricesByItem((prev) => ({ ...prev, [itemId]: prices }));
-      setPriceError((prev) => ({ ...prev, [itemId]: '' }));
-      return prices;
+      return { prices, error: '' };
     } catch (err) {
-      setPriceError((prev) => ({ ...prev, [itemId]: err.message }));
-      return [];
+      return { prices: [], error: err.message };
     }
   };
 
+  const refresh = async () => {
+    const gen = ++refreshGen.current;
+    try {
+      const [itemRows, memberRows, basketRow] = await Promise.all([
+        apiCall(`/api/lists/${list.id}/items`),
+        apiCall(`/api/lists/${list.id}/members`),
+        apiCall(`/api/lists/${list.id}/basket-offer`),
+      ]);
+      if (gen !== refreshGen.current) return;
+      setItems(itemRows);
+      setMembers(memberRows);
+      setBasket(basketRow);
+      const open = Object.keys(openIdsRef.current).filter((id) => openIdsRef.current[id] && itemRows.some((row) => row.id === id));
+      const loaded = await Promise.all(open.map(async (id) => [id, await loadPricesFor(id)]));
+      if (gen !== refreshGen.current) return;
+      if (loaded.length) {
+        setPricesByItem((prev) => {
+          const next = { ...prev };
+          loaded.forEach(([id, result]) => {
+            next[id] = result.prices;
+          });
+          return next;
+        });
+        setPriceError((prev) => {
+          const next = { ...prev };
+          loaded.forEach(([id, result]) => {
+            next[id] = result.error;
+          });
+          return next;
+        });
+      }
+    } catch (err) {
+      if (gen !== refreshGen.current) return;
+      if (err.status === 404) {
+        onBack();
+        return;
+      }
+      console.error(err);
+    } finally {
+      if (gen === refreshGen.current) setLoading(false);
+    }
+  };
+  refreshRef.current = refresh;
+
   useEffect(() => {
     let active = true;
-    const refresh = async () => {
-      try {
-        const [itemRows, memberRows, basketRow] = await Promise.all([
-          apiCall(`/api/lists/${list.id}/items`),
-          apiCall(`/api/lists/${list.id}/members`),
-          apiCall(`/api/lists/${list.id}/basket-offer`),
-        ]);
-        if (!active) return;
-        setItems(itemRows);
-        setMembers(memberRows);
-        setBasket(basketRow);
-        const open = Object.keys(openIdsRef.current).filter((id) => openIdsRef.current[id]);
-        await Promise.all(open.filter((id) => itemRows.some((row) => row.id === id)).map((id) => loadPricesFor(id)));
-      } catch (err) {
-        console.error(err);
-      } finally {
-        if (active) setLoading(false);
-      }
-    };
-    refresh();
+    refreshRef.current();
     const stop = subscribeToHouseholdEvents({
       onStatus: setLiveStatus,
       onEvent: (event) => {
         if (!active) return;
-        if (event.type === 'items.changed' && event.list_id === list.id) {
-          refresh();
-        }
-        if (event.type === 'lists.changed' && event.list_id === list.id) {
-          refresh();
+        const catchUp = event.type === 'ready' || event.type === 'resync';
+        const thisList = event.list_id === list.id && (event.type === 'items.changed' || event.type === 'lists.changed');
+        if (catchUp || thisList) {
+          refreshRef.current();
         }
       },
     });
@@ -392,6 +415,7 @@ const ShoppingListView = ({ list, onBack }) => {
     try {
       await apiCall(`/api/lists/${list.id}/items`, { method: 'POST', body });
       setForm({ name: '', brand: '', package_size: '', package_unit: '', quantity_count: '1' });
+      refreshRef.current();
     } catch (err) {
       setFormError(err.message);
     }
@@ -402,10 +426,12 @@ const ShoppingListView = ({ list, onBack }) => {
       method: 'PUT',
       body: { is_purchased: !item.is_purchased },
     });
+    refreshRef.current();
   };
 
   const deleteItem = async (item) => {
     await apiCall(`/api/items/${item.id}`, { method: 'DELETE' });
+    refreshRef.current();
   };
 
   const shareList = async (event) => {
@@ -418,8 +444,7 @@ const ShoppingListView = ({ list, onBack }) => {
       });
       setShareEmail('');
       setShowShare(false);
-      const memberRows = await apiCall(`/api/lists/${list.id}/members`);
-      setMembers(memberRows);
+      refreshRef.current();
     } catch (err) {
       setShareError(err.message);
     }
@@ -431,7 +456,10 @@ const ShoppingListView = ({ list, onBack }) => {
     openIdsRef.current = next;
     setOpenIds(next);
     if (willOpen) {
-      await loadPricesFor(item.id);
+      const result = await loadPricesFor(item.id);
+      if (!openIdsRef.current[item.id]) return;
+      setPricesByItem((prev) => ({ ...prev, [item.id]: result.prices }));
+      setPriceError((prev) => ({ ...prev, [item.id]: result.error }));
     }
   };
 
@@ -611,29 +639,43 @@ const HouseholdDashboard = ({ onSelectList, onLogout }) => {
   const [newListName, setNewListName] = useState('');
   const [location, setLocation] = useState({ home_zip: '', home_city: '', home_state: '' });
   const [locationMessage, setLocationMessage] = useState('');
+  const refreshGen = useRef(0);
+  const locationLoaded = useRef(false);
 
   useEffect(() => {
     let active = true;
     const refresh = async () => {
-      const [userData, listData] = await Promise.all([
-        apiCall('/api/auth/me'),
-        apiCall('/api/lists'),
-      ]);
-      if (!active) return;
-      setUser(userData);
-      setLists(listData);
-      setLocation({
-        home_zip: userData.home_zip || '',
-        home_city: userData.home_city || '',
-        home_state: userData.home_state || '',
-      });
-      setLoading(false);
+      const gen = ++refreshGen.current;
+      try {
+        const [userData, listData] = await Promise.all([
+          apiCall('/api/auth/me'),
+          apiCall('/api/lists'),
+        ]);
+        if (!active || gen !== refreshGen.current) return;
+        setUser(userData);
+        setLists(listData);
+        if (!locationLoaded.current) {
+          setLocation({
+            home_zip: userData.home_zip || '',
+            home_city: userData.home_city || '',
+            home_state: userData.home_state || '',
+          });
+          locationLoaded.current = true;
+        }
+      } catch (err) {
+        console.error(err);
+      } finally {
+        if (active && gen === refreshGen.current) setLoading(false);
+      }
     };
-    refresh().catch(() => active && setLoading(false));
+    refresh();
     const stop = subscribeToHouseholdEvents({
       onStatus: setLiveStatus,
       onEvent: (event) => {
-        if (event.type === 'lists.changed') refresh();
+        if (!active) return;
+        if (event.type === 'ready' || event.type === 'resync' || event.type === 'lists.changed') {
+          refresh();
+        }
       },
     });
     return () => {

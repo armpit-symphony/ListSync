@@ -440,15 +440,40 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
+def resync_event(reason: str) -> dict:
+    """Tell one household session to reload its own lists from the API.
+
+    The payload has no list contents. A retailer never receives it, because
+    only household event streams are registered.
+    """
+    return {
+        "type": "resync",
+        "reason": reason,
+        "at": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+def offer_event(queue: asyncio.Queue, payload: dict):
+    """Queue one event. If the queue is full, drop the stale backlog and leave a resync."""
+    try:
+        queue.put_nowait(payload)
+        return
+    except asyncio.QueueFull:
+        pass
+    try:
+        while True:
+            queue.get_nowait()
+    except asyncio.QueueEmpty:
+        pass
+    queue.put_nowait(resync_event("queue_overflow"))
+
+
 def publish(user_ids: List[str], event: dict):
     payload = dict(event)
     payload["at"] = datetime.utcnow().isoformat() + "Z"
     for user_id in user_ids:
         for queue in list(_listeners.get(user_id, ())):
-            try:
-                queue.put_nowait(payload)
-            except asyncio.QueueFull:
-                pass
+            offer_event(queue, payload)
 
 
 def member_ids(shopping_list: dict) -> List[str]:

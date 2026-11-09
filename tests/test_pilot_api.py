@@ -1,3 +1,5 @@
+import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -372,3 +374,39 @@ def test_example_prices_are_comparable_only_when_package_matches(client):
     assert search.status_code == 200
     assert all("email" not in row["store"] for row in search.json())
     assert client.get("/api/products/search?query=whole%20milk", headers=auth_header(retailer)).status_code == 403
+
+
+def test_queue_overflow_asks_for_resync_without_list_contents():
+    import server
+
+    queue = asyncio.Queue(maxsize=2)
+    server._listeners["overflow-user"] = {queue}
+    try:
+        queue.put_nowait({"type": "items.changed", "list_id": "stale-list", "action": "old"})
+        queue.put_nowait({"type": "items.changed", "list_id": "stale-list", "action": "older"})
+        server.publish(
+            ["overflow-user"],
+            {"type": "items.changed", "list_id": "secret-list", "action": "updated", "item_id": "secret-item"},
+        )
+        events = []
+        while True:
+            try:
+                events.append(queue.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        assert len(events) == 1
+        assert events[0]["type"] == "resync"
+        assert events[0]["reason"] == "queue_overflow"
+        assert "list_id" not in events[0]
+        assert "item_id" not in events[0]
+        assert "secret" not in json.dumps(events[0])
+    finally:
+        server._listeners.pop("overflow-user", None)
+
+
+def test_store_cannot_open_household_event_stream(client):
+    token = register_store(client, "listener@example.com")
+    response = client.get("/api/events", headers=auth_header(token))
+    assert response.status_code == 403
+
+

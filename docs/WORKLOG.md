@@ -14,5 +14,12 @@ Tests and a two-session browser pass against the production build are recorded i
 
 Restyled the household pages as a lined notebook. Each item is a ruled line with a checkbox and a Prices dropdown. Checking the box keeps the line on the page and draws a line through the writing. The dropdown shows example retailer prices and whether the package actually matches. Retailer screens, privacy, and the live event stream are unchanged.
 
+## 2026-11-09
+
+Added GitHub Actions for the pytest suite against MongoDB 8 and a Node 22 production build. No host or domain was set up.
+
+Fixed one-process live updates so a dropped stream or a full queue reloads that household's own lists and items from the API. The reload ignores an older response if a newer one is already in flight. Overflow no longer drops the last signal. Retailer accounts still cannot open the event stream. Notebook layout was left as approved.
+
 Signed: Shoppy | 2026-11-05
 Signed: Shoppy | 2026-11-06
+Signed: Shoppy | 2026-11-09

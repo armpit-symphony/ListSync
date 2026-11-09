@@ -1,5 +1,8 @@
 import { apiBaseUrl } from './api';
 
+// `ready` is sent on every successful connection, including after a drop.
+// `resync` is sent when this process could not keep the backlog.
+// Both mean the caller should reload its own lists and items from the API.
 export function subscribeToHouseholdEvents({ onEvent, onStatus }) {
   const controller = new AbortController();
   let stopped = false;
@@ -52,7 +55,7 @@ export function subscribeToHouseholdEvents({ onEvent, onStatus }) {
           }
         }
       } catch (err) {
-        if (stopped || err.name === 'AbortError') return;
+        if (stopped) return;
       }
       if (stopped) return;
       onStatus?.('reconnecting');

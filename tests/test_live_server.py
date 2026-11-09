@@ -175,3 +175,89 @@ def test_realtime_updates_and_restart_persistence():
     finally:
         _stop_server(proc)
         _drop_db()
+
+
+def _read_one_event(token, collected):
+    with requests.get(
+        f"{BASE}/api/events",
+        headers={"Authorization": f"Bearer {token}", "Accept": "text/event-stream"},
+        stream=True,
+        timeout=(5, 20),
+    ) as response:
+        assert response.status_code == 200
+        for line in response.iter_lines(decode_unicode=True):
+            if line and line.startswith("data:"):
+                collected.append(json.loads(line[5:].strip()))
+                return
+
+
+def test_reconnect_ready_does_not_replay_a_missed_checkoff():
+    """A dropped stream does not replay the missed checkoff. The new stream starts with ready, and GET has the checked item."""
+    _drop_db()
+    proc = _start_server()
+    try:
+        philip = requests.post(
+            f"{BASE}/api/auth/register",
+            json={"name": "Philip", "email": "philip-gap@example.com", "password": "household-pass-1"},
+            timeout=10,
+        )
+        ada = requests.post(
+            f"{BASE}/api/auth/register",
+            json={"name": "Ada", "email": "ada-gap@example.com", "password": "household-pass-1"},
+            timeout=10,
+        )
+        assert philip.status_code == 200 and ada.status_code == 200
+        philip_token = philip.json()["access_token"]
+        ada_headers = {"Authorization": f"Bearer {ada.json()['access_token']}"}
+        philip_headers = {"Authorization": f"Bearer {philip_token}"}
+
+        created = requests.post(
+            f"{BASE}/api/lists",
+            json={"name": "Gap list"},
+            headers=philip_headers,
+            timeout=10,
+        )
+        list_id = created.json()["id"]
+        requests.post(
+            f"{BASE}/api/lists/{list_id}/share",
+            json={"email": "ada-gap@example.com"},
+            headers=philip_headers,
+            timeout=10,
+        )
+        added = requests.post(
+            f"{BASE}/api/lists/{list_id}/items",
+            json={"name": "Milk", "quantity_count": 1},
+            headers=philip_headers,
+            timeout=10,
+        )
+        item_id = added.json()["id"]
+
+        first = []
+        reader = threading.Thread(target=_read_one_event, args=(philip_token, first), daemon=True)
+        reader.start()
+        reader.join(timeout=8)
+        assert reader.is_alive() is False
+        assert first[0]["type"] == "ready"
+        assert "list_id" not in first[0]
+
+        checked = requests.put(
+            f"{BASE}/api/items/{item_id}",
+            json={"is_purchased": True},
+            headers=ada_headers,
+            timeout=10,
+        )
+        assert checked.status_code == 200
+
+        second = []
+        reader = threading.Thread(target=_read_one_event, args=(philip_token, second), daemon=True)
+        reader.start()
+        reader.join(timeout=8)
+        assert reader.is_alive() is False
+        assert second[0]["type"] == "ready"
+        assert all(event.get("type") != "items.changed" for event in second)
+        rows = requests.get(f"{BASE}/api/lists/{list_id}/items", headers=philip_headers, timeout=10).json()
+        assert rows[0]["is_purchased"] is True
+        assert rows[0]["id"] == item_id
+    finally:
+        _stop_server(proc)
+        _drop_db()

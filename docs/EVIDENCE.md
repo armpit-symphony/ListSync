@@ -1,6 +1,22 @@
 # Evidence
 
-Checked on 5 November 2026. This is a pilot record, not a production sign-off.
+This is a pilot record, not a production sign-off.
+
+## 9 November 2026
+
+Fresh run on the reconnect and CI change, before that commit was pushed:
+
+- `python -m pytest tests/test_pilot_api.py tests/test_live_server.py -q` → **11 passed, 81 warnings, 7.31s**. New cases: a full queue is replaced by `resync` with no list contents, a retailer cannot open `/api/events`, and a dropped stream's next event is `ready` rather than a replay of the missed checkoff. `GET` then shows the item checked.
+- `CI=true yarn build` on Node.js 22 produced `frontend/build/static/js/main.cb52062f.js` and `main.f51009e7.css`.
+- `scripts/browser_reconnect.py` exited 0. Philip's stream was cut by stopping the API process. While he stayed on Reconnecting, Ada checked Milk and added Bread. After his stream connected again, without a page reload, Milk was struck through and Bread was on the page. A later drop, delete of Bread, and reconnect removed Bread. A new list created while his index was disconnected appeared after reconnect.
+
+Screenshots: `docs/evidence/reconnect-dropped.png`, `reconnect-caught-up.png`, `reconnect-new-list.png`.
+
+GitHub Actions is in `.github/workflows/ci.yml`. The result of the run on this commit is recorded after push. There is still no hosted deployment.
+
+## 5–6 November 2026
+
+Checked on 5 November 2026, with the notebook pass on 6 November. This is a pilot record, not a production sign-off.
 
 ## Install and build
 

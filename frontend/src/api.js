@@ -31,7 +31,9 @@ export async function apiCall(endpoint, options = {}) {
     } else if (Array.isArray(detail)) {
       message = detail.map((row) => row.msg || JSON.stringify(row)).join(' ');
     }
-    throw new Error(message);
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
   }
   return payload;
 }
