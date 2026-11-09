@@ -49,6 +49,8 @@ __pycache__/
 .dev-secret
 backend/.dev-secret
 frontend/build/
+deploy/.env
+deploy/*.archive.gz
 
 # ===================
 # ADDITIONAL RULES TO PREVENT FILE SIZE VIOLATIONS

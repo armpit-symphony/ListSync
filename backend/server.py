@@ -21,6 +21,7 @@ import re
 import json
 import uuid
 import asyncio
+import time
 from typing import List, Optional, Dict, Set
 from enum import Enum
 
@@ -134,13 +135,21 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "Accept"],
 )
 
-try:
-    client = MongoClient(MONGO_URL, serverSelectionTimeoutMS=4000)
-    client.admin.command("ping")
-except Exception as exc:
-    raise RuntimeError(
-        f"Cannot reach MongoDB. Start MongoDB and set MONGO_URL. ({exc})"
-    ) from exc
+client = MongoClient(MONGO_URL, serverSelectionTimeoutMS=2000)
+startup_deadline = time.time() + float(os.environ.get("MONGO_STARTUP_TIMEOUT", "40"))
+last_mongo_error = None
+while True:
+    try:
+        client.admin.command("ping")
+        last_mongo_error = None
+        break
+    except Exception as exc:
+        last_mongo_error = exc
+        if time.time() >= startup_deadline:
+            raise RuntimeError(
+                f"Cannot reach MongoDB. Start MongoDB and set MONGO_URL. ({exc})"
+            ) from exc
+        time.sleep(1)
 
 db = client[DB_NAME]
 users_collection = db.users

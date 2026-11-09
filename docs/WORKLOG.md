@@ -22,6 +22,10 @@ Fixed one-process live updates so a dropped stream or a full queue reloads that 
 
 The first CI attempt failed because MongoDB 8.0 will not start on the GitHub-hosted kernel. MongoDB 7.0 started, and both the push and pull request checks passed. See `docs/EVIDENCE.md`.
 
+Prepared a private deploy layout for Philip's existing Ubuntu server. No access to that server was used. `deploy/docker-compose.prod.yml` is project `listsync`: one uvicorn worker, nginx static frontend, MongoDB 7 on a named volume with no published port, and `127.0.0.1:8510` only. The production image is built with an empty API base URL so the browser uses the same origin. CORS in `deploy/.env.example` is only `https://listsync.sparkpitlabs.com`.
+
+Booted that compose on this VM. `http://127.0.0.1:8510/api/health` returned ok. A household register, share, and check-off crossed the container nginx, and the same check-off crossed a second nginx hop on `127.0.0.1:8511` with buffering off. The web bundle does not contain `127.0.0.1:8001`. MongoDB had no host port. `deploy/backup.sh` wrote `/tmp/listsync-backups/listsync-20261109T121254Z.archive.gz`. `deploy/restore.sh` loaded scratch database `listsync_restore_scratch` and matched counts: users 4, shopping lists 2, items 2, store users 1, store products 0. The runbook is `docs/DEPLOY.md`.
+
 Signed: Shoppy | 2026-11-05
 Signed: Shoppy | 2026-11-06
 Signed: Shoppy | 2026-11-09
