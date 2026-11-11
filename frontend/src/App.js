@@ -9,6 +9,10 @@ import { subscribeToHouseholdEvents } from './realtime';
 
 const PACKAGE_UNITS = ['oz', 'lb', 'g', 'kg', 'ml', 'l', 'floz', 'gal', 'pt', 'qt', 'count'];
 
+function formText(event, name) {
+  return String(new FormData(event.currentTarget).get(name) || '');
+}
+
 const fieldClass =
   'w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent';
 
@@ -88,6 +92,8 @@ const HouseholdLogin = ({ onLoginSuccess, switchToRegister, onForgot, onBack }) 
 
   const handleLogin = async (event) => {
     event.preventDefault();
+    const email = formText(event, 'email');
+    const password = formText(event, 'password');
     setLoading(true);
     setError('');
     try {
@@ -114,8 +120,8 @@ const HouseholdLogin = ({ onLoginSuccess, switchToRegister, onForgot, onBack }) 
         <h1 className="text-3xl font-bold text-gray-800 mb-2">Welcome back</h1>
         <p className="text-gray-600 mb-6">Sign in to your household lists</p>
         <form onSubmit={handleLogin} className="space-y-4">
-          <input data-testid="auth-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={fieldClass} placeholder="Email" required />
-          <input data-testid="auth-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} className={fieldClass} placeholder="Password" required />
+          <input data-testid="auth-email" name="email" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} className={fieldClass} placeholder="Email" required />
+          <input data-testid="auth-password" name="password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} className={fieldClass} placeholder="Password" required />
           <AuthError error={error} />
           <button data-testid="auth-submit" type="submit" disabled={loading} className="w-full bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 rounded-lg disabled:opacity-50">
             {loading ? 'Signing in...' : 'Sign in'}
@@ -141,6 +147,9 @@ const HouseholdRegister = ({ onRegisterSuccess, switchToLogin, onBack }) => {
 
   const handleRegister = async (event) => {
     event.preventDefault();
+    const name = formText(event, 'name');
+    const email = formText(event, 'email');
+    const password = formText(event, 'password');
     setLoading(true);
     setError('');
     try {
@@ -167,9 +176,9 @@ const HouseholdRegister = ({ onRegisterSuccess, switchToLogin, onBack }) => {
         <h1 className="text-3xl font-bold text-gray-800 mb-2">Join ListSync</h1>
         <p className="text-gray-600 mb-6">Household accounts are free. Password at least 8 characters.</p>
         <form onSubmit={handleRegister} className="space-y-4">
-          <input data-testid="auth-name" type="text" value={name} onChange={(e) => setName(e.target.value)} className={fieldClass} placeholder="Your name" required />
-          <input data-testid="auth-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={fieldClass} placeholder="Email" required />
-          <input data-testid="auth-password" minLength={8} type="password" value={password} onChange={(e) => setPassword(e.target.value)} className={fieldClass} placeholder="Password" required />
+          <input data-testid="auth-name" name="name" type="text" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} className={fieldClass} placeholder="Your name" required />
+          <input data-testid="auth-email" name="email" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} className={fieldClass} placeholder="Email" required />
+          <input data-testid="auth-password" name="password" minLength={8} type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} className={fieldClass} placeholder="Password" required />
           <AuthError error={error} />
           <button data-testid="auth-submit" type="submit" disabled={loading} className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 rounded-lg disabled:opacity-50">
             {loading ? 'Creating account...' : 'Create account'}
@@ -191,6 +200,8 @@ const StoreLogin = ({ onLoginSuccess, switchToRegister, onBack }) => {
 
   const handleLogin = async (event) => {
     event.preventDefault();
+    const email = formText(event, 'email');
+    const password = formText(event, 'password');
     setLoading(true);
     setError('');
     try {
@@ -214,8 +225,8 @@ const StoreLogin = ({ onLoginSuccess, switchToRegister, onBack }) => {
         <button type="button" onClick={onBack} className="text-gray-600 mb-4">← Back</button>
         <h1 className="text-3xl font-bold text-gray-800 mb-2">Retailer sign in</h1>
         <form onSubmit={handleLogin} className="space-y-4">
-          <input data-testid="auth-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={fieldClass} placeholder="Email" required />
-          <input data-testid="auth-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} className={fieldClass} placeholder="Password" required />
+          <input data-testid="auth-email" name="email" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} className={fieldClass} placeholder="Email" required />
+          <input data-testid="auth-password" name="password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} className={fieldClass} placeholder="Password" required />
           <AuthError error={error} />
           <button data-testid="auth-submit" type="submit" disabled={loading} className="w-full bg-green-600 text-white font-semibold py-3 rounded-lg disabled:opacity-50">
             {loading ? 'Signing in...' : 'Sign in'}
@@ -245,12 +256,14 @@ const StoreRegister = ({ onRegisterSuccess, switchToLogin, onBack }) => {
 
   const handleRegister = async (event) => {
     event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const body = Object.fromEntries(data.entries());
     setLoading(true);
     setError('');
     try {
       const response = await apiCall('/api/store/auth/register', {
         method: 'POST',
-        body: formData,
+        body,
       });
       localStorage.setItem('token', response.access_token);
       localStorage.setItem('userType', response.user_type);
@@ -1225,6 +1238,9 @@ const InviteAuth = ({ mode, setMode, onRegister, onLogin }) => {
     event.preventDefault();
     setLoading(true);
     setError('');
+    const name = formText(event, 'name');
+    const email = formText(event, 'email');
+    const password = formText(event, 'password');
     try {
       const response = await apiCall(mode === 'register' ? '/api/auth/register' : '/api/auth/login', {
         method: 'POST',
@@ -1244,10 +1260,10 @@ const InviteAuth = ({ mode, setMode, onRegister, onLogin }) => {
   return (
     <form onSubmit={submit} className="mt-4 space-y-3">
       {mode === 'register' && (
-        <input data-testid="auth-name" value={name} onChange={(e) => setName(e.target.value)} className="notebook-input notebook-input-small" placeholder="Your name" required />
+        <input data-testid="auth-name" name="name" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} className="notebook-input notebook-input-small" placeholder="Your name" required />
       )}
-      <input data-testid="auth-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="notebook-input notebook-input-small" placeholder="Email" required />
-      <input data-testid="auth-password" type="password" minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} className="notebook-input notebook-input-small" placeholder="Password" required />
+      <input data-testid="auth-email" name="email" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} className="notebook-input notebook-input-small" placeholder="Email" required />
+      <input data-testid="auth-password" name="password" type="password" minLength={8} autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} className="notebook-input notebook-input-small" placeholder="Password" required />
       {error && <p data-testid="form-error" className="notebook-warn">{error}</p>}
       <button data-testid="auth-submit" type="submit" disabled={loading} className="notebook-add-btn">
         {mode === 'register' ? 'Create account and join' : 'Sign in and join'}
