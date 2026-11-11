@@ -37,10 +37,11 @@
   background: #94a3b8;
 }
 
-/* Smooth transitions */
-* {
-  transition: color 0.2s ease, background-color 0.2s ease, border-color 0.2s ease, 
-              transform 0.2s ease, opacity 0.2s ease;
+button,
+a,
+input,
+select {
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
 /* Custom button hover effects */
@@ -281,4 +282,377 @@ input[type="checkbox"]:checked::before {
 
 .shadow-strong {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.16);
+}
+
+.notebook-desk {
+  min-height: 100vh;
+  background: #c4b29a;
+  padding: 16px 12px 40px;
+  color: #1c140f;
+}
+
+.notebook-sheet {
+  position: relative;
+  max-width: 720px;
+  margin: 0 auto;
+  background: #fff8ea;
+  border-radius: 2px 12px 12px 2px;
+  box-shadow: 0 14px 36px rgba(62, 42, 22, 0.2);
+  overflow: hidden;
+}
+
+.notebook-sheet::before {
+  content: "";
+  position: absolute;
+  left: 44px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #d36b74;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.notebook-head,
+.notebook-foot {
+  position: relative;
+  z-index: 2;
+  padding: 18px 16px 16px 64px;
+  background: #fff8ea;
+}
+
+.notebook-head-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.notebook-kicker,
+.notebook-subtitle,
+.notebook-foot,
+.notebook-blank,
+.notebook-drop,
+.notebook-add-btn,
+.notebook-text-btn,
+.notebook-index-count,
+.notebook-drop-panel {
+  font-family: "Source Sans 3", "Segoe UI", sans-serif;
+}
+
+.notebook-kicker {
+  margin: 0;
+  font-size: 0.85rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #5c4a3a;
+}
+
+.notebook-title {
+  margin: 0;
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: 2rem;
+  line-height: 1.15;
+  font-weight: 650;
+  color: #1c140f;
+}
+
+.notebook-subtitle,
+.notebook-foot,
+.notebook-blank {
+  color: #3d342c;
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.notebook-text-btn,
+.notebook-add-btn,
+.notebook-drop,
+.notebook-delete {
+  min-height: 44px;
+  border-radius: 4px;
+}
+
+.notebook-text-btn {
+  border: 1.5px solid #1c140f;
+  background: transparent;
+  color: #1c140f;
+  padding: 0 14px;
+  font-weight: 600;
+}
+
+.notebook-rules {
+  position: relative;
+  z-index: 2;
+  padding: 0 10px 8px 58px;
+  background-color: #fff8ea;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 248, 234, 0) 0,
+    rgba(255, 248, 234, 0) 47px,
+    #7ea0c8 47px,
+    #7ea0c8 48px
+  );
+}
+
+.notebook-line {
+  border-bottom: 0;
+}
+
+.notebook-line-main,
+.notebook-index-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+}
+
+.notebook-check-hit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  margin-left: -6px;
+}
+
+input.notebook-check[type="checkbox"] {
+  appearance: none;
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  border: 2px solid #1c140f;
+  border-radius: 3px;
+  background: #fffef8;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+input.notebook-check[type="checkbox"]:focus-visible {
+  outline: 3px solid #1c140f;
+  outline-offset: 3px;
+}
+
+input.notebook-check[type="checkbox"]:checked {
+  background-color: #1c140f;
+  border-color: #1c140f;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath fill='none' stroke='%23fff8ea' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round' d='M4 10.5l4 4 8-8'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 18px 18px;
+}
+
+input.notebook-check[type="checkbox"]:checked::before {
+  content: none;
+}
+
+.notebook-script {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-family: "Patrick Hand", "Segoe Print", Georgia, serif;
+  font-size: 1.7rem;
+  line-height: 1.15;
+  color: #1c140f;
+}
+
+.notebook-script.is-checked {
+  text-decoration: line-through;
+  text-decoration-thickness: 2px;
+  text-decoration-color: #1c140f;
+}
+
+.notebook-item-note {
+  font-family: "Source Sans 3", "Segoe UI", sans-serif;
+  font-size: 0.95rem;
+  color: #3d342c;
+}
+
+.notebook-drop {
+  flex: 0 0 auto;
+  border: 1.5px solid #1c140f;
+  background: #fffef8;
+  color: #1c140f;
+  padding: 0 12px;
+  font-weight: 650;
+  font-size: 0.95rem;
+}
+
+.notebook-drop-panel {
+  margin: 0 0 8px 44px;
+  padding: 10px 12px;
+  background: #f3ead6;
+  color: #1c140f;
+  border: 1px solid #c8b89a;
+  border-radius: 4px;
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
+.notebook-drop-kicker,
+.notebook-price p {
+  margin: 0 0 6px;
+}
+
+.notebook-price {
+  padding: 8px 0;
+  border-top: 1px solid #d9cbb4;
+}
+
+.notebook-price-top {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+  align-items: baseline;
+}
+
+.notebook-store,
+.notebook-amount {
+  margin: 0;
+  font-weight: 700;
+  color: #1c140f;
+}
+
+.notebook-example {
+  display: inline-block;
+  margin-right: 8px;
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #7a3412;
+}
+
+.notebook-match {
+  color: #1d4d32;
+  font-weight: 650;
+}
+
+.notebook-differ {
+  color: #7a3412;
+  font-weight: 650;
+}
+
+.notebook-delete,
+.notebook-add-btn {
+  border: 1.5px solid #1c140f;
+  background: #1c140f;
+  color: #fff8ea;
+  padding: 0 16px;
+  font-weight: 650;
+}
+
+.notebook-delete {
+  background: transparent;
+  color: #1c140f;
+  margin-top: 4px;
+}
+
+.notebook-add {
+  padding: 8px 0 12px;
+}
+
+.notebook-add-grid,
+.notebook-place {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 4px;
+}
+
+.notebook-input {
+  width: 100%;
+  min-height: 44px;
+  border: none;
+  border-bottom: 1px solid transparent;
+  background: transparent;
+  color: #1c140f;
+  font-family: "Patrick Hand", Georgia, serif;
+  font-size: 1.55rem;
+  padding: 4px 2px;
+}
+
+.notebook-input-small,
+select.notebook-input {
+  font-family: "Source Sans 3", "Segoe UI", sans-serif;
+  font-size: 1rem;
+}
+
+.notebook-input::placeholder {
+  color: #5c4a3a;
+  opacity: 1;
+}
+
+.notebook-sheet input:focus,
+.notebook-sheet select:focus,
+.notebook-sheet textarea:focus {
+  box-shadow: none;
+  outline: 2px solid #1c140f;
+  outline-offset: 2px;
+}
+
+.notebook-add-btn {
+  margin-top: 8px;
+}
+
+.notebook-warn {
+  color: #7f1d1d;
+  font-weight: 650;
+}
+
+.notebook-saved {
+  color: #1d4d32;
+  font-weight: 650;
+}
+
+.notebook-blank {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  margin: 0;
+}
+
+.notebook-index-line {
+  width: 100%;
+  border: none;
+  background: transparent;
+  text-align: left;
+  padding: 0;
+  color: inherit;
+}
+
+.notebook-index-count {
+  color: #3d342c;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.notebook-index-tools {
+  min-height: 56px;
+}
+
+.notebook-foot-title {
+  margin: 0 0 4px;
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: 1.05rem;
+}
+
+@media (min-width: 640px) {
+  .notebook-desk {
+    padding: 28px 24px 48px;
+  }
+
+  .notebook-add-grid {
+    grid-template-columns: 1.4fr 0.7fr 0.8fr 0.6fr;
+    gap: 10px;
+  }
+
+  .notebook-place {
+    grid-template-columns: 1fr 0.6fr 0.7fr auto;
+    align-items: center;
+    gap: 10px;
+  }
 }

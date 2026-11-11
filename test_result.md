@@ -101,3 +101,13 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+
+user_problem_statement: Continue ListSync as a free household pilot with live shared lists and local example retailer prices. Do not bill consumers. Leave whole-basket offers unimplemented.
+metadata:
+  created_by: main_agent
+  version: "1.0"
+  test_sequence: 1
+  run_ui: true
+agent_communication:
+  - agent: main
+    message: "Pilot branch cursor/listsync-household-pilot-d317. pytest tests/test_pilot_api.py tests/test_live_server.py: 8 passed. Browser script and a second desktop session confirmed share, check-off, example prices, outsider isolation, and survival across an API restart. See docs/EVIDENCE.md. Signed: Shoppy | 2026-11-05."

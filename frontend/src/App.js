@@ -1,812 +1,106 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import './App.css';
 import LoadingSpinner from './components/LoadingSpinner';
 import { ToastContainer } from './components/NotificationToast';
 import useToast from './hooks/useToast';
 import ErrorBoundary from './components/ErrorBoundary';
+import { apiCall } from './api';
+import { subscribeToHouseholdEvents } from './realtime';
 
-const API_BASE_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
+const PACKAGE_UNITS = ['oz', 'lb', 'g', 'kg', 'ml', 'l', 'floz', 'gal', 'pt', 'qt', 'count'];
 
-// Utility function for API calls
-const apiCall = async (endpoint, options = {}) => {
-  const token = localStorage.getItem('token');
-  const config = {
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token && { Authorization: `Bearer ${token}` }),
-    },
-    ...options,
-  };
+function formText(event, name) {
+  return String(new FormData(event.currentTarget).get(name) || '');
+}
 
-  if (options.body) {
-    config.body = JSON.stringify(options.body);
-  }
+const fieldClass =
+  'w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent';
 
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, config);
-  
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Something went wrong');
-  }
-  
-  return response.json();
-};
-
-// Landing Page Component
-const LandingPage = ({ onHouseholdLogin, onStoreLogin, onAdminLogin }) => {
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center p-4">
-      <div className="max-w-4xl w-full text-center">
-        <div className="mb-12">
-          <h1 className="text-5xl font-bold text-white mb-6">ShopSync</h1>
-          <p className="text-xl text-blue-100 mb-8">
-            The shared shopping list platform connecting households with local stores
-          </p>
-        </div>
-
-        <div className="grid md:grid-cols-2 gap-8 max-w-3xl mx-auto">
-          {/* Household Users */}
-          <div className="bg-white rounded-xl shadow-2xl p-8 hover:transform hover:scale-105 transition duration-300">
-            <div className="text-6xl mb-4">🏠</div>
-            <h2 className="text-2xl font-bold text-gray-800 mb-4">For Households</h2>
-            <p className="text-gray-600 mb-6">
-              Create shared shopping lists with your household. See local store prices and never forget an item again.
-            </p>
-            <div className="space-y-3 mb-6 text-left">
-              <div className="flex items-center text-gray-700">
-                <span className="text-green-500 mr-2">✓</span>
-                Shared household shopping lists
-              </div>
-              <div className="flex items-center text-gray-700">
-                <span className="text-green-500 mr-2">✓</span>
-                Real-time collaboration
-              </div>
-              <div className="flex items-center text-gray-700">
-                <span className="text-green-500 mr-2">✓</span>
-                Local store prices
-              </div>
-              <div className="flex items-center text-gray-700">
-                <span className="text-green-500 mr-2">✓</span>
-                Free forever
-              </div>
-            </div>
-            <button
-              onClick={onHouseholdLogin}
-              className="w-full bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 px-4 rounded-lg transition duration-200"
-            >
-              Get Started - Free
-            </button>
-          </div>
-
-          {/* Stores */}
-          <div className="bg-white rounded-xl shadow-2xl p-8 hover:transform hover:scale-105 transition duration-300">
-            <div className="text-6xl mb-4">🏪</div>
-            <h2 className="text-2xl font-bold text-gray-800 mb-4">For Stores</h2>
-            <p className="text-gray-600 mb-6">
-              Advertise your products to local customers. Increase foot traffic and customer engagement.
-            </p>
-            <div className="space-y-3 mb-6 text-left">
-              <div className="flex items-center text-gray-700">
-                <span className="text-green-500 mr-2">✓</span>
-                Product advertising platform
-              </div>
-              <div className="flex items-center text-gray-700">
-                <span className="text-green-500 mr-2">✓</span>
-                Target local customers
-              </div>
-              <div className="flex items-center text-gray-700">
-                <span className="text-green-500 mr-2">✓</span>
-                $12/month or $74.99/year
-              </div>
-              <div className="flex items-center text-gray-700">
-                <span className="text-green-500 mr-2">✓</span>
-                7-day free trial
-              </div>
-            </div>
-            <button
-              onClick={onStoreLogin}
-              className="w-full bg-green-500 hover:bg-green-600 text-white font-semibold py-3 px-4 rounded-lg transition duration-200"
-            >
-              Start Free Trial
-            </button>
-          </div>
-        </div>
-
-        {/* Admin Link */}
-        <div className="mt-8">
-          <button
-            onClick={onAdminLogin}
-            className="text-blue-100 hover:text-white text-sm underline"
-          >
-            Admin Access
-          </button>
-        </div>
-
-        <div className="mt-12 text-blue-100">
-          <p className="text-lg">Trusted by households and stores nationwide</p>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// Admin Login Component (Enhanced)
-const AdminLogin = ({ onLoginSuccess, onBack, showToast }) => {
-  const [email, setEmail] = useState('admin@shopsync.com'); // Pre-fill for convenience
-  const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
-
-  const handleLogin = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-
-    try {
-      const response = await apiCall('/api/admin/auth/login', {
-        method: 'POST',
-        body: { email, password },
-      });
-
-      localStorage.setItem('token', response.access_token);
-      localStorage.setItem('userType', response.user_type);
-      showToast.success('Admin login successful! Welcome to the admin dashboard.');
-      onLoginSuccess('admin');
-    } catch (err) {
-      showToast.error(`Login failed: ${err.message}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-700 to-gray-900 flex items-center justify-center p-4">
-      <div className="max-w-md w-full bg-white rounded-xl shadow-2xl p-8 transform transition-all duration-300 hover:scale-105">
-        <div className="text-center mb-8">
-          <button
-            onClick={onBack}
-            className="text-gray-600 hover:text-gray-800 mb-4 flex items-center transition duration-200"
-          >
-            ← Back to Home
-          </button>
-          <div className="text-4xl mb-4">🔐</div>
-          <h1 className="text-3xl font-bold text-gray-800 mb-2">Admin Access</h1>
-          <p className="text-gray-600">Platform administration dashboard</p>
-        </div>
-
-        <form onSubmit={handleLogin} className="space-y-6">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Admin Email
-            </label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent transition duration-200"
-              placeholder="Enter admin email"
-              required
-              disabled={loading}
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Password
-            </label>
-            <div className="relative">
-              <input
-                type={showPassword ? "text" : "password"}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent transition duration-200"
-                placeholder="Enter password"
-                required
-                disabled={loading}
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
-                disabled={loading}
-              >
-                {showPassword ? '👁️' : '👁️‍🗨️'}
-              </button>
-            </div>
-          </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-gray-700 hover:bg-gray-800 text-white font-semibold py-3 px-4 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
-          >
-            {loading ? (
-              <>
-                <LoadingSpinner size="sm" />
-                <span className="ml-2">Signing In...</span>
-              </>
-            ) : (
-              'Admin Sign In'
-            )}
-          </button>
-        </form>
-
-        <div className="mt-6 text-center text-sm text-gray-500">
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-            <p className="font-medium">Default Credentials:</p>
-            <p>Email: admin@shopsync.com</p>
-            <p>Password: admin123</p>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// Admin Dashboard Component
-const AdminDashboard = ({ onLogout }) => {
-  const [stats, setStats] = useState(null);
-  const [subscriptions, setSubscriptions] = useState([]);
-  const [paymentConfig, setPaymentConfig] = useState({});
-  const [configStatus, setConfigStatus] = useState({});
-  const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('overview');
-  const [adminInfo, setAdminInfo] = useState(null);
-
-  useEffect(() => {
-    fetchAdminData();
-  }, []);
-
-  const fetchAdminData = async () => {
-    try {
-      const [statsData, subscriptionsData, configStatusData, adminData] = await Promise.all([
-        apiCall('/api/admin/stats'),
-        apiCall('/api/admin/subscriptions'),
-        apiCall('/api/admin/payment/config'),
-        apiCall('/api/admin/auth/me')
-      ]);
-
-      setStats(statsData);
-      setSubscriptions(subscriptionsData.subscriptions);
-      setConfigStatus(configStatusData);
-      setAdminInfo(adminData);
-    } catch (err) {
-      console.error('Failed to fetch admin data:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleConfigUpdate = async () => {
-    try {
-      await apiCall('/api/admin/payment/config', {
-        method: 'POST',
-        body: paymentConfig,
-      });
-
-      alert('Payment configuration updated successfully');
-      fetchAdminData();
-    } catch (err) {
-      alert('Failed to update configuration: ' + err.message);
-    }
-  };
-
-  const handleLogout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('userType');
-    onLogout();
-  };
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-500 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading admin dashboard...</p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white shadow-sm border-b">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-800">ShopSync Admin</h1>
-            {adminInfo && <p className="text-gray-600">Welcome, {adminInfo.name}</p>}
-          </div>
-          <button
-            onClick={handleLogout}
-            className="text-gray-600 hover:text-gray-800 font-medium"
-          >
-            Logout
-          </button>
-        </div>
-      </header>
-
-      {/* Navigation Tabs */}
-      <div className="max-w-7xl mx-auto px-4 py-4">
-        <div className="border-b border-gray-200">
-          <nav className="-mb-px flex space-x-8">
-            {['overview', 'payments', 'subscriptions'].map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`py-2 px-1 border-b-2 font-medium text-sm capitalize ${
-                  activeTab === tab
-                    ? 'border-gray-500 text-gray-700'
-                    : 'border-transparent text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                {tab}
-              </button>
-            ))}
-          </nav>
-        </div>
-      </div>
-
-      {/* Content */}
-      <main className="max-w-7xl mx-auto px-4 py-8">
-        {activeTab === 'overview' && (
-          <AdminOverview stats={stats} />
-        )}
-        {activeTab === 'payments' && (
-          <AdminPayments 
-            paymentConfig={paymentConfig}
-            setPaymentConfig={setPaymentConfig}
-            configStatus={configStatus}
-            onConfigUpdate={handleConfigUpdate}
-          />
-        )}
-        {activeTab === 'subscriptions' && (
-          <AdminSubscriptions subscriptions={subscriptions} />
-        )}
-      </main>
-    </div>
-  );
-};
-
-// Admin Overview Component
-const AdminOverview = ({ stats }) => {
-  if (!stats) return <div>Loading...</div>;
-
-  return (
-    <div className="space-y-8">
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-white rounded-xl shadow-sm border p-6">
-          <h3 className="text-lg font-semibold text-gray-800 mb-2">Total Stores</h3>
-          <p className="text-3xl font-bold text-blue-500">{stats.total_stores}</p>
-        </div>
-        
-        <div className="bg-white rounded-xl shadow-sm border p-6">
-          <h3 className="text-lg font-semibold text-gray-800 mb-2">Active Subscriptions</h3>
-          <p className="text-3xl font-bold text-green-500">{stats.active_subscriptions}</p>
-        </div>
-        
-        <div className="bg-white rounded-xl shadow-sm border p-6">
-          <h3 className="text-lg font-semibold text-gray-800 mb-2">Trial Stores</h3>
-          <p className="text-3xl font-bold text-yellow-500">{stats.trial_stores}</p>
-        </div>
-        
-        <div className="bg-white rounded-xl shadow-sm border p-6">
-          <h3 className="text-lg font-semibold text-gray-800 mb-2">Total Households</h3>
-          <p className="text-3xl font-bold text-purple-500">{stats.total_households}</p>
-        </div>
-      </div>
-
-      {/* Revenue Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white rounded-xl shadow-sm border p-6">
-          <h3 className="text-lg font-semibold text-gray-800 mb-2">Monthly Revenue</h3>
-          <p className="text-3xl font-bold text-green-600">${stats.monthly_revenue.toFixed(2)}</p>
-          <p className="text-sm text-gray-500">From monthly plans</p>
-        </div>
-        
-        <div className="bg-white rounded-xl shadow-sm border p-6">
-          <h3 className="text-lg font-semibold text-gray-800 mb-2">Yearly Revenue</h3>
-          <p className="text-3xl font-bold text-green-600">${stats.yearly_revenue.toFixed(2)}</p>
-          <p className="text-sm text-gray-500">From yearly plans</p>
-        </div>
-        
-        <div className="bg-white rounded-xl shadow-sm border p-6">
-          <h3 className="text-lg font-semibold text-gray-800 mb-2">Total MRR</h3>
-          <p className="text-3xl font-bold text-green-700">${stats.total_monthly_recurring.toFixed(2)}</p>
-          <p className="text-sm text-gray-500">Monthly recurring revenue</p>
-        </div>
-      </div>
-
-      {/* Additional Stats */}
-      <div className="bg-white rounded-xl shadow-sm border p-6">
-        <h2 className="text-xl font-semibold text-gray-800 mb-4">Platform Overview</h2>
-        <div className="grid md:grid-cols-2 gap-6">
-          <div>
-            <p className="text-gray-600 mb-2"><strong>Total Products Listed:</strong> {stats.total_products}</p>
-            <p className="text-gray-600 mb-2"><strong>Conversion Rate:</strong> {((stats.active_subscriptions / stats.total_stores) * 100).toFixed(1)}%</p>
-          </div>
-          <div>
-            <p className="text-gray-600 mb-2"><strong>Average Revenue Per Store:</strong> ${(stats.total_monthly_recurring / stats.active_subscriptions || 0).toFixed(2)}</p>
-            <p className="text-gray-600 mb-2"><strong>Stores in Trial:</strong> {stats.trial_stores}</p>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// Admin Payments Component
-const AdminPayments = ({ paymentConfig, setPaymentConfig, configStatus, onConfigUpdate }) => {
-  const handleInputChange = (field, value) => {
-    setPaymentConfig(prev => ({
-      ...prev,
-      [field]: value
-    }));
-  };
-
-  return (
-    <div className="space-y-8">
-      <h2 className="text-2xl font-semibold text-gray-800">Payment Configuration</h2>
-      
-      {/* Configuration Status */}
-      <div className="bg-white rounded-xl shadow-sm border p-6">
-        <h3 className="text-lg font-semibold text-gray-800 mb-4">Configuration Status</h3>
-        <div className="space-y-3">
-          <div className="flex justify-between items-center">
-            <span className="text-gray-700">Stripe Integration</span>
-            <span className={`px-3 py-1 rounded-full text-sm ${
-              configStatus.stripe_configured 
-                ? 'bg-green-100 text-green-800' 
-                : 'bg-red-100 text-red-800'
-            }`}>
-              {configStatus.stripe_configured ? 'Configured' : 'Not Configured'}
-            </span>
-          </div>
-          <div className="flex justify-between items-center">
-            <span className="text-gray-700">PayPal Integration</span>
-            <span className={`px-3 py-1 rounded-full text-sm ${
-              configStatus.paypal_configured 
-                ? 'bg-green-100 text-green-800' 
-                : 'bg-red-100 text-red-800'
-            }`}>
-              {configStatus.paypal_configured ? 'Configured' : 'Not Configured'}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Stripe Configuration */}
-      <div className="bg-white rounded-xl shadow-sm border p-6">
-        <h3 className="text-lg font-semibold text-gray-800 mb-4">Stripe Configuration</h3>
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Secret Key
-            </label>
-            <input
-              type="password"
-              value={paymentConfig.stripe_secret_key || ''}
-              onChange={(e) => handleInputChange('stripe_secret_key', e.target.value)}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent"
-              placeholder="sk_test_... or sk_live_..."
-            />
-          </div>
-          
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Publishable Key
-            </label>
-            <input
-              type="text"
-              value={paymentConfig.stripe_publishable_key || ''}
-              onChange={(e) => handleInputChange('stripe_publishable_key', e.target.value)}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent"
-              placeholder="pk_test_... or pk_live_..."
-            />
-          </div>
-          
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Webhook Endpoint Secret
-            </label>
-            <input
-              type="password"
-              value={paymentConfig.stripe_endpoint_secret || ''}
-              onChange={(e) => handleInputChange('stripe_endpoint_secret', e.target.value)}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent"
-              placeholder="whsec_..."
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* PayPal Configuration */}
-      <div className="bg-white rounded-xl shadow-sm border p-6">
-        <h3 className="text-lg font-semibold text-gray-800 mb-4">PayPal Configuration</h3>
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Client ID
-            </label>
-            <input
-              type="text"
-              value={paymentConfig.paypal_client_id || ''}
-              onChange={(e) => handleInputChange('paypal_client_id', e.target.value)}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent"
-              placeholder="PayPal Client ID"
-            />
-          </div>
-          
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Client Secret
-            </label>
-            <input
-              type="password"
-              value={paymentConfig.paypal_client_secret || ''}
-              onChange={(e) => handleInputChange('paypal_client_secret', e.target.value)}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent"
-              placeholder="PayPal Client Secret"
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Update Button */}
-      <div className="flex justify-end">
-        <button
-          onClick={onConfigUpdate}
-          className="bg-gray-700 hover:bg-gray-800 text-white px-8 py-3 rounded-lg font-medium transition duration-200"
-        >
-          Update Configuration
-        </button>
-      </div>
-
-      {/* Instructions */}
-      <div className="bg-blue-50 border border-blue-200 rounded-xl p-6">
-        <h3 className="text-lg font-semibold text-blue-800 mb-4">Setup Instructions</h3>
-        <div className="space-y-3 text-blue-700">
-          <p><strong>Stripe:</strong> Get your API keys from <a href="https://dashboard.stripe.com/apikeys" target="_blank" rel="noopener noreferrer" className="underline">Stripe Dashboard</a></p>
-          <p><strong>PayPal:</strong> Create an app at <a href="https://developer.paypal.com/developer/applications" target="_blank" rel="noopener noreferrer" className="underline">PayPal Developer</a></p>
-          <p><strong>Webhooks:</strong> Set up webhook endpoints for payment event handling</p>
-          <p><strong>Security:</strong> All API keys are encrypted before storage</p>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// Admin Subscriptions Component
-const AdminSubscriptions = ({ subscriptions }) => {
-  return (
-    <div className="space-y-6">
-      <h2 className="text-2xl font-semibold text-gray-800">Store Subscriptions</h2>
-      
-      {subscriptions.length === 0 ? (
-        <div className="text-center py-16 bg-white rounded-xl shadow-sm border">
-          <div className="text-gray-400 text-6xl mb-4">📊</div>
-          <h3 className="text-xl font-semibold text-gray-600 mb-2">No subscriptions yet</h3>
-          <p className="text-gray-500">Stores haven't started subscribing yet</p>
-        </div>
-      ) : (
-        <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-200">
-            <h3 className="text-lg font-semibold text-gray-800">All Subscriptions</h3>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Store
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Plan
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Status
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Revenue
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Provider
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Start Date
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {subscriptions.map((subscription) => (
-                  <tr key={subscription.id}>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div>
-                        <div className="text-sm font-medium text-gray-900">
-                          {subscription.store_name || 'Unknown Store'}
-                        </div>
-                        <div className="text-sm text-gray-500">
-                          {subscription.store_email}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className="text-sm text-gray-900 capitalize">
-                        {subscription.plan}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                        subscription.status === 'active' 
-                          ? 'bg-green-100 text-green-800'
-                          : subscription.status === 'trial'
-                          ? 'bg-blue-100 text-blue-800'
-                          : 'bg-red-100 text-red-800'
-                      }`}>
-                        {subscription.status}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      ${subscription.monthly_price.toFixed(2)}/month
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 capitalize">
-                      {subscription.provider}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {new Date(subscription.start_date).toLocaleDateString()}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-// Store Subscription Component (Updated Pricing)
-const StoreSubscription = ({ subscription, onSubscriptionChange }) => {
-  const [loading, setLoading] = useState(false);
-
-  const handleStripeSubscribe = async (plan) => {
-    setLoading(true);
-    try {
-      const response = await apiCall('/api/stripe/create-checkout-session', {
-        method: 'POST',
-        body: { plan_type: plan }
-      });
-      
-      // Redirect to Stripe Checkout
-      window.location.href = response.session_url;
-    } catch (err) {
-      console.error('Stripe subscription failed:', err);
-      alert('Failed to start subscription process: ' + err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  if (subscription) {
-    return (
-      <div className="bg-white rounded-xl shadow-sm border p-6">
-        <h2 className="text-xl font-semibold text-gray-800 mb-4">Current Subscription</h2>
-        <div className="space-y-4">
-          <p><strong>Plan:</strong> {subscription.plan} Plan</p>
-          <p><strong>Status:</strong> {subscription.status}</p>
-          <p><strong>Monthly Price:</strong> ${subscription.monthly_price.toFixed(2)}</p>
-          <p><strong>Expires:</strong> {new Date(subscription.end_date).toLocaleDateString()}</p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-6">
-      <h2 className="text-2xl font-semibold text-gray-800">Choose Your Plan</h2>
-      
-      <div className="grid md:grid-cols-2 gap-6">
-        {/* Monthly Plan - UPDATED PRICING */}
-        <div className="bg-white rounded-xl shadow-sm border p-6">
-          <h3 className="text-xl font-semibold text-gray-800 mb-4">Monthly Plan</h3>
-          <p className="text-3xl font-bold text-gray-800 mb-4">$12.00<span className="text-lg font-normal">/month</span></p>
-          <ul className="space-y-2 mb-6">
-            <li className="flex items-center text-gray-700">
-              <span className="text-green-500 mr-2">✓</span>
-              Unlimited product listings
-            </li>
-            <li className="flex items-center text-gray-700">
-              <span className="text-green-500 mr-2">✓</span>
-              Local family advertising
-            </li>
-            <li className="flex items-center text-gray-700">
-              <span className="text-green-500 mr-2">✓</span>
-              Analytics dashboard
-            </li>
-            <li className="flex items-center text-gray-700">
-              <span className="text-green-500 mr-2">✓</span>
-              Customer insights
-            </li>
-          </ul>
-          <button
-            onClick={() => handleStripeSubscribe('monthly')}
-            disabled={loading}
-            className="w-full bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 px-4 rounded-lg transition duration-200 disabled:opacity-50"
-          >
-            {loading ? 'Processing...' : 'Subscribe Monthly - $12.00'}
-          </button>
-        </div>
-
-        {/* Yearly Plan - UPDATED PRICING */}
-        <div className="bg-white rounded-xl shadow-sm border p-6 ring-2 ring-green-500">
-          <div className="text-center">
-            <span className="bg-green-500 text-white px-3 py-1 rounded-full text-sm font-medium">BEST VALUE</span>
-          </div>
-          <h3 className="text-xl font-semibold text-gray-800 mb-4 mt-4">Yearly Plan</h3>
-          <p className="text-3xl font-bold text-gray-800 mb-4">
-            $74.99<span className="text-lg font-normal">/year</span>
-            <span className="block text-sm text-gray-500">Just $6.25/month - Save 48%!</span>
-          </p>
-          <ul className="space-y-2 mb-6">
-            <li className="flex items-center text-gray-700">
-              <span className="text-green-500 mr-2">✓</span>
-              Everything in Monthly Plan
-            </li>
-            <li className="flex items-center text-gray-700">
-              <span className="text-green-500 mr-2">✓</span>
-              48% savings vs monthly
-            </li>
-            <li className="flex items-center text-gray-700">
-              <span className="text-green-500 mr-2">✓</span>
-              Priority customer support
-            </li>
-            <li className="flex items-center text-gray-700">
-              <span className="text-green-500 mr-2">✓</span>
-              Advanced analytics
-            </li>
-          </ul>
-          <button
-            onClick={() => handleStripeSubscribe('yearly')}
-            disabled={loading}
-            className="w-full bg-green-500 hover:bg-green-600 text-white font-semibold py-3 px-4 rounded-lg transition duration-200 disabled:opacity-50"
-          >
-            {loading ? 'Processing...' : 'Subscribe Yearly - $74.99'}
-          </button>
-        </div>
-      </div>
-
-      <div className="bg-blue-50 border border-blue-200 rounded-xl p-6">
-        <h3 className="text-lg font-semibold text-blue-800 mb-2">🔒 Secure Payment Processing</h3>
-        <p className="text-blue-700">
-          All payments are processed securely through Stripe. Your payment information is never stored on our servers.
+const LandingPage = ({ onHouseholdLogin, onStoreLogin }) => (
+  <div className="min-h-screen bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center p-4">
+    <div className="max-w-4xl w-full text-center">
+      <div className="mb-8">
+        <p className="inline-block bg-white/15 text-white text-sm rounded-full px-4 py-1 mb-4">
+          Household pilot · not a public production service
+        </p>
+        <h1 className="text-4xl sm:text-5xl font-bold text-white mb-4">ListSync</h1>
+        <p className="text-lg sm:text-xl text-blue-100">
+          A private shared shopping list for a household. Anyone in the household can add or check off items, and the others see it immediately.
         </p>
       </div>
+
+      <div className="grid md:grid-cols-2 gap-6 max-w-3xl mx-auto text-left">
+        <div className="bg-white rounded-xl shadow-2xl p-6 sm:p-8">
+          <h2 className="text-2xl font-bold text-gray-800 mb-3">Households</h2>
+          <p className="text-gray-600 mb-4">
+            Free for the people using the list. Share it with your household, keep it private, and compare example prices only when the brand and package actually match.
+          </p>
+          <ul className="space-y-2 mb-6 text-gray-700">
+            <li>Shared lists for more than one person</li>
+            <li>Changes show up without reloading</li>
+            <li>No consumer fee</li>
+          </ul>
+          <button
+            type="button"
+            data-testid="landing-household"
+            onClick={onHouseholdLogin}
+            className="w-full bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 px-4 rounded-lg"
+          >
+            Open a household list
+          </button>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-2xl p-6 sm:p-8">
+          <h2 className="text-2xl font-bold text-gray-800 mb-3">Retailers</h2>
+          <p className="text-gray-600 mb-4">
+            The retailer side is meant to be funded later by a monthly or yearly subscription. Those fee amounts are unset. This pilot does not bill anyone and does not take card details.
+          </p>
+          <ul className="space-y-2 mb-6 text-gray-700">
+            <li>Enter local example prices yourself</li>
+            <li>Prices are labeled example, not live shelf prices</li>
+            <li>Retailers cannot browse household lists</li>
+          </ul>
+          <button
+            type="button"
+            data-testid="landing-retailer"
+            onClick={onStoreLogin}
+            className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-4 rounded-lg"
+          >
+            Retailer price account
+          </button>
+        </div>
+      </div>
+        <p className="mt-8 text-blue-100 text-sm">
+        Admin console and payment processing are turned off. Password reset email sends only when SMTP is configured.
+      </p>
     </div>
-  );
-};
+  </div>
+);
 
-// Include all other existing components (HouseholdLogin, StoreLogin, etc.) with minimal changes
-// Reusing existing components from previous version...
+const AuthError = ({ error }) =>
+  error ? (
+    <div data-testid="form-error" className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+      {error}
+    </div>
+  ) : null;
 
-// Household Login Component (unchanged)
-const HouseholdLogin = ({ onLoginSuccess, switchToRegister, onBack }) => {
+const HouseholdLogin = ({ onLoginSuccess, switchToRegister, onForgot, onBack }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const handleLogin = async (e) => {
-    e.preventDefault();
+  const handleLogin = async (event) => {
+    event.preventDefault();
+    const email = formText(event, 'email');
+    const password = formText(event, 'password');
     setLoading(true);
     setError('');
-
     try {
       const response = await apiCall('/api/auth/login', {
         method: 'POST',
         body: { email, password },
       });
-
       localStorage.setItem('token', response.access_token);
       localStorage.setItem('userType', response.user_type);
       onLoginSuccess('household');
@@ -819,79 +113,31 @@ const HouseholdLogin = ({ onLoginSuccess, switchToRegister, onBack }) => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center p-4">
-      <div className="max-w-md w-full bg-white rounded-xl shadow-2xl p-8">
-        <div className="text-center mb-8">
-          <button
-            onClick={onBack}
-            className="text-gray-600 hover:text-gray-800 mb-4"
-          >
-            ← Back to Home
-          </button>
-          <h1 className="text-3xl font-bold text-gray-800 mb-2">Welcome Back</h1>
-          <p className="text-gray-600">Sign in to your shared shopping lists</p>
-        </div>
-
-        <form onSubmit={handleLogin} className="space-y-6">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Email Address
-            </label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder="Enter your email"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Password
-            </label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder="Enter your password"
-              required
-            />
-          </div>
-
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
-              {error}
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 px-4 rounded-lg transition duration-200 disabled:opacity-50"
-          >
-            {loading ? 'Signing In...' : 'Sign In'}
+      <div className="max-w-md w-full bg-white rounded-xl shadow-2xl p-6 sm:p-8">
+        <button type="button" onClick={onBack} className="text-gray-600 hover:text-gray-800 mb-4">
+          ← Back
+        </button>
+        <h1 className="text-3xl font-bold text-gray-800 mb-2">Welcome back</h1>
+        <p className="text-gray-600 mb-6">Sign in to your household lists</p>
+        <form onSubmit={handleLogin} className="space-y-4">
+          <input data-testid="auth-email" name="email" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} className={fieldClass} placeholder="Email" required />
+          <input data-testid="auth-password" name="password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} className={fieldClass} placeholder="Password" required />
+          <AuthError error={error} />
+          <button data-testid="auth-submit" type="submit" disabled={loading} className="w-full bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 rounded-lg disabled:opacity-50">
+            {loading ? 'Signing in...' : 'Sign in'}
           </button>
         </form>
-
-        <div className="mt-6 text-center">
-          <p className="text-gray-600">
-            Don't have an account?{' '}
-            <button
-              onClick={switchToRegister}
-              className="text-blue-500 hover:text-blue-600 font-semibold"
-            >
-              Sign up
-            </button>
-          </p>
-        </div>
+        <button data-testid="forgot-password" type="button" onClick={onForgot} className="mt-4 text-sm text-gray-600 underline">
+          Forgot password?
+        </button>
+        <button data-testid="auth-switch" type="button" onClick={switchToRegister} className="mt-4 block text-blue-600 font-semibold">
+          Create a household account
+        </button>
       </div>
     </div>
   );
 };
 
-// Household Register Component (unchanged)
 const HouseholdRegister = ({ onRegisterSuccess, switchToLogin, onBack }) => {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -899,17 +145,18 @@ const HouseholdRegister = ({ onRegisterSuccess, switchToLogin, onBack }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const handleRegister = async (e) => {
-    e.preventDefault();
+  const handleRegister = async (event) => {
+    event.preventDefault();
+    const name = formText(event, 'name');
+    const email = formText(event, 'email');
+    const password = formText(event, 'password');
     setLoading(true);
     setError('');
-
     try {
       const response = await apiCall('/api/auth/register', {
         method: 'POST',
         body: { name, email, password },
       });
-
       localStorage.setItem('token', response.access_token);
       localStorage.setItem('userType', response.user_type);
       onRegisterSuccess('household');
@@ -922,110 +169,46 @@ const HouseholdRegister = ({ onRegisterSuccess, switchToLogin, onBack }) => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-500 to-blue-600 flex items-center justify-center p-4">
-      <div className="max-w-md w-full bg-white rounded-xl shadow-2xl p-8">
-        <div className="text-center mb-8">
-          <button
-            onClick={onBack}
-            className="text-gray-600 hover:text-gray-800 mb-4"
-          >
-            ← Back to Home
-          </button>
-          <h1 className="text-3xl font-bold text-gray-800 mb-2">Join ShopSync</h1>
-          <p className="text-gray-600">Create your account to start sharing lists</p>
-        </div>
-
-        <form onSubmit={handleRegister} className="space-y-6">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Full Name
-            </label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-              placeholder="Enter your full name"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Email Address
-            </label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-              placeholder="Enter your email"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Password
-            </label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-              placeholder="Create a password"
-              required
-            />
-          </div>
-
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
-              {error}
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-green-500 hover:bg-green-600 text-white font-semibold py-3 px-4 rounded-lg transition duration-200 disabled:opacity-50"
-          >
-            {loading ? 'Creating Account...' : 'Create Account'}
+      <div className="max-w-md w-full bg-white rounded-xl shadow-2xl p-6 sm:p-8">
+        <button type="button" onClick={onBack} className="text-gray-600 hover:text-gray-800 mb-4">
+          ← Back
+        </button>
+        <h1 className="text-3xl font-bold text-gray-800 mb-2">Join ListSync</h1>
+        <p className="text-gray-600 mb-6">Household accounts are free. Password at least 8 characters.</p>
+        <form onSubmit={handleRegister} className="space-y-4">
+          <input data-testid="auth-name" name="name" type="text" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} className={fieldClass} placeholder="Your name" required />
+          <input data-testid="auth-email" name="email" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} className={fieldClass} placeholder="Email" required />
+          <input data-testid="auth-password" name="password" minLength={8} type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} className={fieldClass} placeholder="Password" required />
+          <AuthError error={error} />
+          <button data-testid="auth-submit" type="submit" disabled={loading} className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 rounded-lg disabled:opacity-50">
+            {loading ? 'Creating account...' : 'Create account'}
           </button>
         </form>
-
-        <div className="mt-6 text-center">
-          <p className="text-gray-600">
-            Already have an account?{' '}
-            <button
-              onClick={switchToLogin}
-              className="text-green-500 hover:text-green-600 font-semibold"
-            >
-              Sign in
-            </button>
-          </p>
-        </div>
+        <button data-testid="auth-switch" type="button" onClick={switchToLogin} className="mt-4 text-green-700 font-semibold">
+          Already registered? Sign in
+        </button>
       </div>
     </div>
   );
 };
 
-// Store Login Component (unchanged)
 const StoreLogin = ({ onLoginSuccess, switchToRegister, onBack }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const handleLogin = async (e) => {
-    e.preventDefault();
+  const handleLogin = async (event) => {
+    event.preventDefault();
+    const email = formText(event, 'email');
+    const password = formText(event, 'password');
     setLoading(true);
     setError('');
-
     try {
       const response = await apiCall('/api/store/auth/login', {
         method: 'POST',
         body: { email, password },
       });
-
       localStorage.setItem('token', response.access_token);
       localStorage.setItem('userType', response.user_type);
       onLoginSuccess('store');
@@ -1037,80 +220,26 @@ const StoreLogin = ({ onLoginSuccess, switchToRegister, onBack }) => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-green-500 to-blue-600 flex items-center justify-center p-4">
-      <div className="max-w-md w-full bg-white rounded-xl shadow-2xl p-8">
-        <div className="text-center mb-8">
-          <button
-            onClick={onBack}
-            className="text-gray-600 hover:text-gray-800 mb-4"
-          >
-            ← Back to Home
-          </button>
-          <h1 className="text-3xl font-bold text-gray-800 mb-2">Store Login</h1>
-          <p className="text-gray-600">Access your store dashboard</p>
-        </div>
-
-        <form onSubmit={handleLogin} className="space-y-6">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Email Address
-            </label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-              placeholder="Enter your store email"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Password
-            </label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-              placeholder="Enter your password"
-              required
-            />
-          </div>
-
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
-              {error}
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-green-500 hover:bg-green-600 text-white font-semibold py-3 px-4 rounded-lg transition duration-200 disabled:opacity-50"
-          >
-            {loading ? 'Signing In...' : 'Sign In'}
+    <div className="min-h-screen bg-gradient-to-br from-green-600 to-emerald-800 flex items-center justify-center p-4">
+      <div className="max-w-md w-full bg-white rounded-xl shadow-2xl p-6 sm:p-8">
+        <button type="button" onClick={onBack} className="text-gray-600 mb-4">← Back</button>
+        <h1 className="text-3xl font-bold text-gray-800 mb-2">Retailer sign in</h1>
+        <form onSubmit={handleLogin} className="space-y-4">
+          <input data-testid="auth-email" name="email" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} className={fieldClass} placeholder="Email" required />
+          <input data-testid="auth-password" name="password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} className={fieldClass} placeholder="Password" required />
+          <AuthError error={error} />
+          <button data-testid="auth-submit" type="submit" disabled={loading} className="w-full bg-green-600 text-white font-semibold py-3 rounded-lg disabled:opacity-50">
+            {loading ? 'Signing in...' : 'Sign in'}
           </button>
         </form>
-
-        <div className="mt-6 text-center">
-          <p className="text-gray-600">
-            New store?{' '}
-            <button
-              onClick={switchToRegister}
-              className="text-green-500 hover:text-green-600 font-semibold"
-            >
-              Start free trial
-            </button>
-          </p>
-        </div>
+        <button data-testid="auth-switch" type="button" onClick={switchToRegister} className="mt-4 text-green-700 font-semibold">
+          Create a retailer account
+        </button>
       </div>
     </div>
   );
 };
 
-// Store Register Component (unchanged)
 const StoreRegister = ({ onRegisterSuccess, switchToLogin, onBack }) => {
   const [formData, setFormData] = useState({
     store_name: '',
@@ -1120,29 +249,22 @@ const StoreRegister = ({ onRegisterSuccess, switchToLogin, onBack }) => {
     city: '',
     state: '',
     zip_code: '',
-    phone: ''
+    phone: '',
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const handleInputChange = (e) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value
-    });
-  };
-
-  const handleRegister = async (e) => {
-    e.preventDefault();
+  const handleRegister = async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const body = Object.fromEntries(data.entries());
     setLoading(true);
     setError('');
-
     try {
       const response = await apiCall('/api/store/auth/register', {
         method: 'POST',
-        body: formData,
+        body,
       });
-
       localStorage.setItem('token', response.access_token);
       localStorage.setItem('userType', response.user_type);
       onRegisterSuccess('store');
@@ -1153,207 +275,578 @@ const StoreRegister = ({ onRegisterSuccess, switchToLogin, onBack }) => {
     }
   };
 
+  const setField = (event) => {
+    setFormData({ ...formData, [event.target.name]: event.target.value });
+  };
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-green-500 to-blue-600 flex items-center justify-center p-4">
-      <div className="max-w-2xl w-full bg-white rounded-xl shadow-2xl p-8">
-        <div className="text-center mb-8">
-          <button
-            onClick={onBack}
-            className="text-gray-600 hover:text-gray-800 mb-4"
-          >
-            ← Back to Home
-          </button>
-          <h1 className="text-3xl font-bold text-gray-800 mb-2">Join as a Store</h1>
-          <p className="text-gray-600">Start your 7-day free trial - Just $12/month!</p>
-        </div>
-
-        <form onSubmit={handleRegister} className="space-y-6">
-          <div className="grid md:grid-cols-2 gap-6">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Store Name
-              </label>
-              <input
-                type="text"
-                name="store_name"
-                value={formData.store_name}
-                onChange={handleInputChange}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                placeholder="Your Store Name"
-                required
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Email Address
-              </label>
-              <input
-                type="email"
-                name="email"
-                value={formData.email}
-                onChange={handleInputChange}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                placeholder="store@example.com"
-                required
-              />
-            </div>
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+      <div className="max-w-2xl w-full bg-white rounded-xl shadow p-6 sm:p-8">
+        <button type="button" onClick={onBack} className="text-gray-600 mb-4">← Back</button>
+        <h1 className="text-3xl font-bold text-gray-800 mb-2">Retailer account</h1>
+        <p className="text-gray-600 mb-6">
+          Monthly and yearly plans are future placeholders. The fee is unset, and this form does not start a trial charge.
+        </p>
+        <form onSubmit={handleRegister} className="space-y-4">
+          <div className="grid sm:grid-cols-2 gap-4">
+            <input data-testid="store-name" name="store_name" value={formData.store_name} onChange={setField} className={fieldClass} placeholder="Store name" required />
+            <input data-testid="auth-email" name="email" type="email" value={formData.email} onChange={setField} className={fieldClass} placeholder="Email" required />
           </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Password
-            </label>
-            <input
-              type="password"
-              name="password"
-              value={formData.password}
-              onChange={handleInputChange}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-              placeholder="Create a password"
-              required
-            />
+          <input data-testid="auth-password" name="password" type="password" minLength={8} value={formData.password} onChange={setField} className={fieldClass} placeholder="Password (8+ characters)" required />
+          <input data-testid="store-address" name="address" value={formData.address} onChange={setField} className={fieldClass} placeholder="Street address" required />
+          <div className="grid sm:grid-cols-3 gap-4">
+            <input data-testid="store-city" name="city" value={formData.city} onChange={setField} className={fieldClass} placeholder="City" required />
+            <input data-testid="store-state" name="state" value={formData.state} onChange={setField} className={fieldClass} placeholder="State" required />
+            <input data-testid="store-zip" name="zip_code" value={formData.zip_code} onChange={setField} className={fieldClass} placeholder="ZIP" required />
           </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Address
-            </label>
-            <input
-              type="text"
-              name="address"
-              value={formData.address}
-              onChange={handleInputChange}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-              placeholder="Store address"
-              required
-            />
-          </div>
-
-          <div className="grid md:grid-cols-3 gap-6">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                City
-              </label>
-              <input
-                type="text"
-                name="city"
-                value={formData.city}
-                onChange={handleInputChange}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                placeholder="City"
-                required
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                State
-              </label>
-              <input
-                type="text"
-                name="state"
-                value={formData.state}
-                onChange={handleInputChange}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                placeholder="State"
-                required
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                ZIP Code
-              </label>
-              <input
-                type="text"
-                name="zip_code"
-                value={formData.zip_code}
-                onChange={handleInputChange}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                placeholder="ZIP"
-                required
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Phone (Optional)
-            </label>
-            <input
-              type="tel"
-              name="phone"
-              value={formData.phone}
-              onChange={handleInputChange}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-              placeholder="Store phone number"
-            />
-          </div>
-
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
-              {error}
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-green-500 hover:bg-green-600 text-white font-semibold py-3 px-4 rounded-lg transition duration-200 disabled:opacity-50"
-          >
-            {loading ? 'Creating Account...' : 'Start Free Trial'}
+          <AuthError error={error} />
+          <button data-testid="auth-submit" type="submit" disabled={loading} className="w-full bg-green-600 text-white font-semibold py-3 rounded-lg disabled:opacity-50">
+            {loading ? 'Creating account...' : 'Create retailer account'}
           </button>
         </form>
-
-        <div className="mt-6 text-center">
-          <p className="text-gray-600">
-            Already have an account?{' '}
-            <button
-              onClick={switchToLogin}
-              className="text-green-500 hover:text-green-600 font-semibold"
-            >
-              Sign in
-            </button>
-          </p>
-        </div>
+        <button data-testid="auth-switch" type="button" onClick={switchToLogin} className="mt-4 text-green-700 font-semibold">
+          Already registered? Sign in
+        </button>
       </div>
     </div>
   );
 };
 
-// Store Dashboard Component (updated pricing display)
-const StoreDashboard = ({ onLogout }) => {
-  const [storeInfo, setStoreInfo] = useState(null);
-  const [subscription, setSubscription] = useState(null);
-  const [products, setProducts] = useState([]);
+const localityText = {
+  same_zip: 'Same ZIP as your household',
+  same_city: 'Same city as your household',
+  other_area: 'Different area from your household',
+  household_location_unset: 'Household location is not set, so locality was not compared',
+};
+
+const ShoppingListView = ({ list, onBack }) => {
+  const [items, setItems] = useState([]);
+  const [members, setMembers] = useState([]);
+  const [basket, setBasket] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('overview');
-  const [showAddProduct, setShowAddProduct] = useState(false);
+  const [liveStatus, setLiveStatus] = useState('connecting');
+  const [form, setForm] = useState({
+    name: '',
+    brand: '',
+    package_size: '',
+    package_unit: '',
+    quantity_count: '1',
+  });
+  const [showShare, setShowShare] = useState(false);
+  const [showInvite, setShowInvite] = useState(false);
+  const [inviteLink, setInviteLink] = useState('');
+  const [inviteNote, setInviteNote] = useState('');
+  const [invites, setInvites] = useState([]);
+  const [shareEmail, setShareEmail] = useState('');
+  const [shareError, setShareError] = useState('');
+  const [formError, setFormError] = useState('');
+  const [isOwner, setIsOwner] = useState(false);
+  const [openIds, setOpenIds] = useState({});
+  const [pricesByItem, setPricesByItem] = useState({});
+  const [priceError, setPriceError] = useState({});
+  const openIdsRef = useRef({});
+  const refreshGen = useRef(0);
+  const refreshRef = useRef(async () => {});
 
-  useEffect(() => {
-    fetchStoreData();
-  }, []);
-
-  const fetchStoreData = async () => {
+  const loadPricesFor = async (itemId) => {
     try {
-      const [storeData, subscriptionData, productsData] = await Promise.all([
-        apiCall('/api/store/auth/me'),
-        apiCall('/api/store/subscription'),
-        apiCall('/api/store/products')
-      ]);
-
-      setStoreInfo(storeData);
-      setSubscription(subscriptionData);
-      setProducts(productsData);
+      const prices = await apiCall(`/api/lists/${list.id}/items/${itemId}/example-prices`);
+      return { prices, error: '' };
     } catch (err) {
-      console.error('Failed to fetch store data:', err);
-    } finally {
-      setLoading(false);
+      return { prices: [], error: err.message };
     }
   };
 
-  const handleLogout = () => {
+  const refresh = async () => {
+    const gen = ++refreshGen.current;
+    try {
+      const [itemRows, memberRows, basketRow] = await Promise.all([
+        apiCall(`/api/lists/${list.id}/items`),
+        apiCall(`/api/lists/${list.id}/members`),
+        apiCall(`/api/lists/${list.id}/basket-offer`),
+      ]);
+      if (gen !== refreshGen.current) return;
+      setItems(itemRows);
+      setMembers(memberRows);
+      setBasket(basketRow);
+      const open = Object.keys(openIdsRef.current).filter((id) => openIdsRef.current[id] && itemRows.some((row) => row.id === id));
+      const loaded = await Promise.all(open.map(async (id) => [id, await loadPricesFor(id)]));
+      if (gen !== refreshGen.current) return;
+      if (loaded.length) {
+        setPricesByItem((prev) => {
+          const next = { ...prev };
+          loaded.forEach(([id, result]) => {
+            next[id] = result.prices;
+          });
+          return next;
+        });
+        setPriceError((prev) => {
+          const next = { ...prev };
+          loaded.forEach(([id, result]) => {
+            next[id] = result.error;
+          });
+          return next;
+        });
+      }
+    } catch (err) {
+      if (gen !== refreshGen.current) return;
+      if (err.status === 404) {
+        onBack();
+        return;
+      }
+      console.error(err);
+    } finally {
+      if (gen === refreshGen.current) setLoading(false);
+    }
+  };
+  refreshRef.current = refresh;
+
+  useEffect(() => {
+    let active = true;
+    refreshRef.current();
+    const stop = subscribeToHouseholdEvents({
+      onStatus: setLiveStatus,
+      onEvent: (event) => {
+        if (!active) return;
+        const catchUp = event.type === 'ready' || event.type === 'resync';
+        const thisList = event.list_id === list.id && (event.type === 'items.changed' || event.type === 'lists.changed');
+        if (catchUp || thisList) {
+          refreshRef.current();
+        }
+      },
+    });
+    return () => {
+      active = false;
+      stop();
+    };
+  }, [list.id]);
+
+  useEffect(() => {
+    let active = true;
+    apiCall('/api/auth/me')
+      .then((me) => {
+        if (active) setIsOwner(me.id === list.created_by);
+      })
+      .catch(() => {
+        if (active) setIsOwner(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [list.created_by]);
+
+  const addItem = async (event) => {
+    event.preventDefault();
+    setFormError('');
+    const body = {
+      name: form.name,
+      brand: form.brand || null,
+      quantity_count: form.quantity_count ? Number(form.quantity_count) : 1,
+    };
+    if (form.package_size || form.package_unit) {
+      body.package_size = form.package_size ? Number(form.package_size) : null;
+      body.package_unit = form.package_unit || null;
+    }
+    try {
+      await apiCall(`/api/lists/${list.id}/items`, { method: 'POST', body });
+      setForm({ name: '', brand: '', package_size: '', package_unit: '', quantity_count: '1' });
+      refreshRef.current();
+    } catch (err) {
+      setFormError(err.message);
+    }
+  };
+
+  const toggleItem = async (item) => {
+    await apiCall(`/api/items/${item.id}`, {
+      method: 'PUT',
+      body: { is_purchased: !item.is_purchased },
+    });
+    refreshRef.current();
+  };
+
+  const deleteItem = async (item) => {
+    await apiCall(`/api/items/${item.id}`, { method: 'DELETE' });
+    refreshRef.current();
+  };
+
+  const shareList = async (event) => {
+    event.preventDefault();
+    setShareError('');
+    try {
+      await apiCall(`/api/lists/${list.id}/share`, {
+        method: 'POST',
+        body: { email: shareEmail },
+      });
+      setShareEmail('');
+      setShowShare(false);
+      refreshRef.current();
+    } catch (err) {
+      setShareError(err.message);
+    }
+  };
+
+  const toggleDisclosure = async (item) => {
+    const willOpen = !openIdsRef.current[item.id];
+    const next = { ...openIdsRef.current, [item.id]: willOpen };
+    openIdsRef.current = next;
+    setOpenIds(next);
+    if (willOpen) {
+      const result = await loadPricesFor(item.id);
+      if (!openIdsRef.current[item.id]) return;
+      setPricesByItem((prev) => ({ ...prev, [item.id]: result.prices }));
+      setPriceError((prev) => ({ ...prev, [item.id]: result.error }));
+    }
+  };
+
+  const renderItem = (item) => {
+    const open = Boolean(openIds[item.id]);
+    const prices = pricesByItem[item.id];
+    const written = [
+      item.brand,
+      item.package_size && item.package_unit ? `${item.package_size} ${item.package_unit}` : null,
+      `qty ${item.quantity_count || item.quantity}`,
+    ].filter(Boolean).join(', ');
+    const panelId = `prices-${item.id}`;
+    return (
+      <div
+        key={item.id}
+        data-testid="item-row"
+        data-item-name={item.name}
+        data-purchased={item.is_purchased ? 'true' : 'false'}
+        data-open={open ? 'true' : 'false'}
+        className="notebook-line"
+      >
+        <div className="notebook-line-main">
+          <label className="notebook-check-hit">
+            <input
+              type="checkbox"
+              className="notebook-check"
+              data-testid="item-toggle"
+              checked={Boolean(item.is_purchased)}
+              aria-label={item.is_purchased ? `Mark ${item.name} not purchased` : `Mark ${item.name} purchased`}
+              onChange={() => toggleItem(item)}
+            />
+          </label>
+          <p className={`notebook-script ${item.is_purchased ? 'is-checked' : ''}`}>
+            <span className="notebook-item-name">{item.name}</span>
+            {written && <span className="notebook-item-note"> {written}</span>}
+          </p>
+          <button
+            type="button"
+            data-testid="show-prices"
+            className="notebook-drop"
+            aria-expanded={open}
+            aria-controls={panelId}
+            onClick={() => toggleDisclosure(item)}
+          >
+            Prices <span aria-hidden="true">{open ? '▴' : '▾'}</span>
+          </button>
+        </div>
+        {open && (
+          <div id={panelId} className="notebook-drop-panel" data-testid="price-panel">
+            <p className="notebook-drop-kicker">
+              {item.added_by_name ? `Added by ${item.added_by_name}. ` : ''}
+              Example prices only. Nothing here says a store has this in stock.
+            </p>
+            {priceError[item.id] && <p className="notebook-warn">{priceError[item.id]}</p>}
+            {prices && prices.length === 0 && (
+              <p>No example prices with this exact item name.</p>
+            )}
+            {prices && prices.map((price) => (
+              <div key={price.product_id} data-testid="price-card" data-comparable={price.comparable ? 'true' : 'false'} className="notebook-price">
+                <div className="notebook-price-top">
+                  <p className="notebook-store">{price.store_name}</p>
+                  <p className="notebook-amount">
+                    <span className="notebook-example">{price.price_label}</span>
+                    ${price.price.toFixed(2)}
+                  </p>
+                </div>
+                <p>
+                  {price.brand || 'Brand not recorded'} · {price.package_size} {price.package_unit}
+                  {' · '}{price.locality_city}, {price.locality_state} {price.locality_zip}
+                </p>
+                <p className={price.comparable ? 'notebook-match' : 'notebook-differ'}>
+                  {price.comparable
+                    ? 'Comparable example: brand, package size, and unit match. This is still not a live price or a stock check.'
+                    : `Not the same product. ${price.comparability_reasons.join(', ')}.`}
+                </p>
+                <p>{localityText[price.locality_relation] || price.locality_relation}</p>
+                <p>{price.validity_note}</p>
+                <p>{price.availability_note}</p>
+              </div>
+            ))}
+            {!prices && !priceError[item.id] && <p>Looking up example prices…</p>}
+            <button
+              type="button"
+              data-testid="item-delete"
+              aria-label={`Delete ${item.name}`}
+              className="notebook-delete"
+              onClick={() => deleteItem(item)}
+            >
+              Remove this line
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  if (loading) {
+    return (
+      <div className="notebook-desk flex items-center justify-center">
+        <LoadingSpinner message="Opening the notebook..." />
+      </div>
+    );
+  }
+
+  const stillToBuy = items.filter((item) => !item.is_purchased).length;
+
+  return (
+    <div className="notebook-desk">
+      <article className="notebook-sheet">
+        <header className="notebook-head">
+          <div className="notebook-head-row">
+            <button type="button" onClick={onBack} className="notebook-text-btn">← All lists</button>
+            <div className="flex gap-2">
+              {isOwner && (
+                <button
+                  type="button"
+                  data-testid="invite-list"
+                  onClick={async () => {
+                    setShowInvite(true);
+                    try {
+                      setInvites(await apiCall(`/api/lists/${list.id}/invites`));
+                    } catch (err) {
+                      setInviteNote(err.message);
+                    }
+                  }}
+                  className="notebook-text-btn"
+                >
+                  Invite
+                </button>
+              )}
+              <button type="button" data-testid="share-list" onClick={() => setShowShare(true)} className="notebook-text-btn">
+                Share
+              </button>
+            </div>
+          </div>
+          <h1 className="notebook-title">{list.name}</h1>
+          <p className="notebook-subtitle">
+            {stillToBuy} still to buy · {members.map((member) => member.name).join(', ') || 'just you'} ·{' '}
+            <span data-testid="live-status">{liveStatus === 'live' ? 'Live' : 'Reconnecting'}</span>
+          </p>
+        </header>
+
+        <div className="notebook-rules">
+          {items.length === 0 && <p className="notebook-blank">The page is blank. Write the first line below.</p>}
+          {items.map(renderItem)}
+
+          <form onSubmit={addItem} className="notebook-add">
+            <input data-testid="item-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="notebook-input" placeholder="Write an item" required />
+            <div className="notebook-add-grid">
+              <input data-testid="item-brand" value={form.brand} onChange={(e) => setForm({ ...form, brand: e.target.value })} className="notebook-input notebook-input-small" placeholder="Brand" />
+              <input data-testid="item-package-size" value={form.package_size} onChange={(e) => setForm({ ...form, package_size: e.target.value })} className="notebook-input notebook-input-small" placeholder="Size" inputMode="decimal" />
+              <select data-testid="item-package-unit" value={form.package_unit} onChange={(e) => setForm({ ...form, package_unit: e.target.value })} className="notebook-input notebook-input-small" aria-label="Package unit">
+                <option value="">Unit</option>
+                {PACKAGE_UNITS.map((unit) => (
+                  <option key={unit} value={unit}>{unit}</option>
+                ))}
+              </select>
+              <input data-testid="item-quantity" value={form.quantity_count} onChange={(e) => setForm({ ...form, quantity_count: e.target.value })} className="notebook-input notebook-input-small" placeholder="Qty" inputMode="decimal" aria-label="Quantity" />
+            </div>
+            {formError && <p data-testid="form-error" className="notebook-warn">{formError}</p>}
+            <button data-testid="add-item" type="submit" className="notebook-add-btn">Add item</button>
+          </form>
+        </div>
+
+        <footer className="notebook-foot" data-testid="basket-placeholder">
+          <p className="notebook-foot-title">Whole-basket retailer offer</p>
+          <p>{basket?.message}</p>
+          <p>Implemented: {basket?.implemented ? 'yes' : 'no'}. Offers: none.</p>
+        </footer>
+      </article>
+
+      {showInvite && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+          <div className="notebook-sheet max-w-md w-full p-6 space-y-4">
+            <h3 className="notebook-title text-2xl">Invite</h3>
+            <p className="notebook-subtitle">One link, one person, seven days. It does not show the list until they join.</p>
+            <button
+              type="button"
+              data-testid="create-invite"
+              className="notebook-add-btn"
+              onClick={async () => {
+                setInviteNote('');
+                try {
+                  const created = await apiCall(`/api/lists/${list.id}/invites`, { method: 'POST' });
+                  setInviteLink(`${window.location.origin}/invite/${created.token}`);
+                  setInvites(await apiCall(`/api/lists/${list.id}/invites`));
+                } catch (err) {
+                  setInviteNote(err.message);
+                }
+              }}
+            >
+              Create invite link
+            </button>
+            {inviteLink && (
+              <>
+                <input data-testid="invite-link" readOnly value={inviteLink} className="notebook-input notebook-input-small" />
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    data-testid="invite-copy"
+                    className="notebook-text-btn"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(inviteLink);
+                        setInviteNote('Copied');
+                      } catch (err) {
+                        setInviteNote('Copy the link from the box');
+                      }
+                    }}
+                  >
+                    Copy
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="invite-share"
+                    className="notebook-text-btn"
+                    onClick={async () => {
+                      if (navigator.share) {
+                        try {
+                          await navigator.share({ title: "Join my ListSync list", url: inviteLink });
+                          return;
+                        } catch (err) {
+                          if (err && err.name === 'AbortError') return;
+                        }
+                      }
+                      try {
+                        await navigator.clipboard.writeText(inviteLink);
+                        setInviteNote('Copied');
+                      } catch (err) {
+                        setInviteNote('Copy the link from the box');
+                      }
+                    }}
+                  >
+                    Share
+                  </button>
+                </div>
+              </>
+            )}
+            {invites.filter((row) => !row.used && !row.revoked).map((row) => (
+              <button
+                key={row.id}
+                type="button"
+                className="notebook-text-btn"
+                onClick={async () => {
+                  await apiCall(`/api/lists/${list.id}/invites/${row.id}/revoke`, { method: 'POST' });
+                  setInvites(await apiCall(`/api/lists/${list.id}/invites`));
+                  setInviteNote('Invite revoked');
+                }}
+              >
+                Revoke
+              </button>
+            ))}
+            {inviteNote && <p className="notebook-subtitle">{inviteNote}</p>}
+            <button type="button" className="notebook-text-btn" onClick={() => setShowInvite(false)}>Close</button>
+          </div>
+        </div>
+      )}
+
+      {showShare && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+          <form onSubmit={shareList} className="bg-white rounded-xl max-w-md w-full p-6 space-y-4">
+            <h3 className="text-xl font-semibold">Share with a household member</h3>
+            <p className="text-sm text-gray-600">They need a ListSync account already. Retailers are not added to household lists.</p>
+            <input data-testid="share-email" type="email" value={shareEmail} onChange={(e) => setShareEmail(e.target.value)} className={fieldClass} placeholder="Their email" required />
+            <AuthError error={shareError} />
+            <div className="flex justify-end gap-3">
+              <button type="button" onClick={() => setShowShare(false)} className="px-4 py-2 text-gray-600">Cancel</button>
+              <button data-testid="share-submit" type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg">Share list</button>
+            </div>
+          </form>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const HouseholdDashboard = ({ onSelectList, onLogout }) => {
+  const [lists, setLists] = useState([]);
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [liveStatus, setLiveStatus] = useState('connecting');
+  const [showCreate, setShowCreate] = useState(false);
+  const [newListName, setNewListName] = useState('');
+  const [location, setLocation] = useState({ home_zip: '', home_city: '', home_state: '' });
+  const [locationMessage, setLocationMessage] = useState('');
+  const refreshGen = useRef(0);
+  const locationLoaded = useRef(false);
+
+  useEffect(() => {
+    let active = true;
+    const refresh = async () => {
+      const gen = ++refreshGen.current;
+      try {
+        const [userData, listData] = await Promise.all([
+          apiCall('/api/auth/me'),
+          apiCall('/api/lists'),
+        ]);
+        if (!active || gen !== refreshGen.current) return;
+        setUser(userData);
+        setLists(listData);
+        if (!locationLoaded.current) {
+          setLocation({
+            home_zip: userData.home_zip || '',
+            home_city: userData.home_city || '',
+            home_state: userData.home_state || '',
+          });
+          locationLoaded.current = true;
+        }
+      } catch (err) {
+        console.error(err);
+      } finally {
+        if (active && gen === refreshGen.current) setLoading(false);
+      }
+    };
+    refresh();
+    const stop = subscribeToHouseholdEvents({
+      onStatus: setLiveStatus,
+      onEvent: (event) => {
+        if (!active) return;
+        if (event.type === 'ready' || event.type === 'resync' || event.type === 'lists.changed') {
+          refresh();
+        }
+      },
+    });
+    return () => {
+      active = false;
+      stop();
+    };
+  }, []);
+
+  const createList = async (event) => {
+    event.preventDefault();
+    await apiCall('/api/lists', { method: 'POST', body: { name: newListName } });
+    setNewListName('');
+    setShowCreate(false);
+  };
+
+  const saveLocation = async (event) => {
+    event.preventDefault();
+    const updated = await apiCall('/api/auth/me', {
+      method: 'PATCH',
+      body: {
+        home_zip: location.home_zip,
+        home_city: location.home_city,
+        home_state: location.home_state,
+      },
+    });
+    setUser(updated);
+    setLocationMessage('Location saved. It is only used to label whether an example price is in your ZIP or city.');
+  };
+
+  const logout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('userType');
     onLogout();
@@ -1361,246 +854,119 @@ const StoreDashboard = ({ onLogout }) => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-500 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading store dashboard...</p>
-        </div>
+      <div className="notebook-desk flex items-center justify-center">
+        <LoadingSpinner message="Opening your notebook..." />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white shadow-sm border-b">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-800">{storeInfo?.store_name}</h1>
-            <p className="text-gray-600">
-              {storeInfo?.subscription_status === 'trial' ? 'Free Trial Active' : 
-               storeInfo?.subscription_status === 'active' ? 'Active Subscription' : 'Inactive'}
-            </p>
+    <div className="notebook-desk">
+      <article className="notebook-sheet">
+        <header className="notebook-head">
+          <div className="notebook-head-row">
+            <p className="notebook-kicker">ListSync</p>
+            <button data-testid="logout" type="button" onClick={logout} className="notebook-text-btn">Log out</button>
           </div>
-          <button
-            onClick={handleLogout}
-            className="text-gray-600 hover:text-gray-800 font-medium"
-          >
-            Logout
-          </button>
-        </div>
-      </header>
-
-      {/* Navigation Tabs */}
-      <div className="max-w-7xl mx-auto px-4 py-4">
-        <div className="border-b border-gray-200">
-          <nav className="-mb-px flex space-x-8">
-            {['overview', 'products', 'subscription'].map((tab) => (
+          <h1 className="notebook-title">{user ? user.name : 'Household'}</h1>
+          <p className="notebook-subtitle">
+            <span data-testid="live-status">{liveStatus === 'live' ? 'Live' : 'Reconnecting'}</span>
+            {' · '}pick a list, or start a new page
+          </p>
+        </header>
+        <div className="notebook-rules">
+          <div className="notebook-line-main notebook-index-tools">
+            <button data-testid="new-list" type="button" onClick={() => setShowCreate(true)} className="notebook-add-btn">
+              New list
+            </button>
+          </div>
+          {lists.length === 0 ? (
+            <p className="notebook-blank">No lists yet. Create one for this week.</p>
+          ) : (
+            lists.map((row) => (
               <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`py-2 px-1 border-b-2 font-medium text-sm capitalize ${
-                  activeTab === tab
-                    ? 'border-green-500 text-green-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700'
-                }`}
+                type="button"
+                key={row.id}
+                data-testid="list-card"
+                onClick={() => onSelectList(row)}
+                className="notebook-index-line"
               >
-                {tab}
+                <span className="notebook-script">{row.name}</span>
+                <span className="notebook-index-count">{row.shared_with.length + 1} member{row.shared_with.length === 0 ? '' : 's'}</span>
               </button>
-            ))}
-          </nav>
+            ))
+          )}
         </div>
-      </div>
+        <footer className="notebook-foot">
+          <p className="notebook-foot-title">Your place</p>
+          <p>Optional. Used only to say whether an example price is local. It is not shared with retailers as a shopping list.</p>
+          <form onSubmit={saveLocation} className="notebook-place">
+            <input data-testid="home-city" value={location.home_city} onChange={(e) => setLocation({ ...location, home_city: e.target.value })} className="notebook-input notebook-input-small" placeholder="City" aria-label="City" />
+            <input data-testid="home-state" value={location.home_state} onChange={(e) => setLocation({ ...location, home_state: e.target.value })} className="notebook-input notebook-input-small" placeholder="State" aria-label="State" />
+            <input data-testid="home-zip" value={location.home_zip} onChange={(e) => setLocation({ ...location, home_zip: e.target.value })} className="notebook-input notebook-input-small" placeholder="ZIP" aria-label="ZIP" />
+            <button data-testid="save-location" type="submit" className="notebook-add-btn">Save</button>
+          </form>
+          {locationMessage && <p className="notebook-saved">{locationMessage}</p>}
+          <ChangePassword />
+        </footer>
+      </article>
 
-      {/* Content */}
-      <main className="max-w-7xl mx-auto px-4 py-8">
-        {activeTab === 'overview' && (
-          <StoreOverview storeInfo={storeInfo} subscription={subscription} products={products} />
-        )}
-        {activeTab === 'products' && (
-          <StoreProducts 
-            products={products} 
-            onProductsChange={fetchStoreData}
-            showAddProduct={showAddProduct}
-            setShowAddProduct={setShowAddProduct}
-          />
-        )}
-        {activeTab === 'subscription' && (
-          <StoreSubscription subscription={subscription} onSubscriptionChange={fetchStoreData} />
-        )}
-      </main>
-    </div>
-  );
-};
-
-// Store Overview Component (updated pricing display)
-const StoreOverview = ({ storeInfo, subscription, products }) => {
-  return (
-    <div className="space-y-8">
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white rounded-xl shadow-sm border p-6">
-          <h3 className="text-lg font-semibold text-gray-800 mb-2">Products Listed</h3>
-          <p className="text-3xl font-bold text-green-500">{products.length}</p>
-        </div>
-        
-        <div className="bg-white rounded-xl shadow-sm border p-6">
-          <h3 className="text-lg font-semibold text-gray-800 mb-2">Subscription Status</h3>
-          <p className={`text-3xl font-bold capitalize ${
-            storeInfo?.subscription_status === 'active' ? 'text-green-500' :
-            storeInfo?.subscription_status === 'trial' ? 'text-blue-500' : 'text-red-500'
-          }`}>
-            {storeInfo?.subscription_status}
-          </p>
-        </div>
-        
-        <div className="bg-white rounded-xl shadow-sm border p-6">
-          <h3 className="text-lg font-semibold text-gray-800 mb-2">Monthly Cost</h3>
-          <p className="text-3xl font-bold text-gray-800">
-            {subscription ? `$${subscription.monthly_price.toFixed(2)}` : 'No Plan'}
-          </p>
-        </div>
-      </div>
-
-      {/* Store Info */}
-      <div className="bg-white rounded-xl shadow-sm border p-6">
-        <h2 className="text-xl font-semibold text-gray-800 mb-4">Store Information</h2>
-        <div className="grid md:grid-cols-2 gap-6">
-          <div>
-            <p className="text-gray-600 mb-2"><strong>Address:</strong> {storeInfo?.address}</p>
-            <p className="text-gray-600 mb-2"><strong>City:</strong> {storeInfo?.city}, {storeInfo?.state}</p>
-            <p className="text-gray-600 mb-2"><strong>ZIP:</strong> {storeInfo?.zip_code}</p>
-          </div>
-          <div>
-            <p className="text-gray-600 mb-2"><strong>Email:</strong> {storeInfo?.email}</p>
-            {storeInfo?.phone && (
-              <p className="text-gray-600 mb-2"><strong>Phone:</strong> {storeInfo.phone}</p>
-            )}
-            <p className="text-gray-600 mb-2">
-              <strong>Member since:</strong> {new Date(storeInfo?.created_at).toLocaleDateString()}
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Trial Notice */}
-      {storeInfo?.subscription_status === 'trial' && (
-        <div className="bg-blue-50 border border-blue-200 rounded-xl p-6">
-          <h3 className="text-lg font-semibold text-blue-800 mb-2">🎉 Free Trial Active</h3>
-          <p className="text-blue-700 mb-4">
-            You're currently on a 7-day free trial. After your trial ends, choose a subscription plan to continue advertising your products.
-          </p>
-          <p className="text-blue-700">
-            <strong>Trial expires:</strong> {new Date(storeInfo?.subscription_expires).toLocaleDateString()}
-          </p>
-        </div>
-      )}
-    </div>
-  );
-};
-
-// Store Products Component (unchanged)
-const StoreProducts = ({ products, onProductsChange, showAddProduct, setShowAddProduct }) => {
-  return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-semibold text-gray-800">Your Products</h2>
-        <button
-          onClick={() => setShowAddProduct(true)}
-          className="bg-green-500 hover:bg-green-600 text-white px-6 py-2 rounded-lg font-medium transition duration-200"
-        >
-          + Add Product
-        </button>
-      </div>
-
-      {products.length === 0 ? (
-        <div className="text-center py-16 bg-white rounded-xl shadow-sm border">
-          <div className="text-gray-400 text-6xl mb-4">📦</div>
-          <h3 className="text-xl font-semibold text-gray-600 mb-2">No products yet</h3>
-          <p className="text-gray-500 mb-6">Add your first product to start advertising to local customers</p>
-          <button
-            onClick={() => setShowAddProduct(true)}
-            className="bg-green-500 hover:bg-green-600 text-white px-6 py-3 rounded-lg font-medium transition duration-200"
-          >
-            Add Your First Product
-          </button>
-        </div>
-      ) : (
-        <div className="grid gap-4">
-          {products.map((product) => (
-            <div key={product.id} className="bg-white rounded-xl shadow-sm border p-6">
-              <div className="flex justify-between items-start">
-                <div className="flex-1">
-                  <h3 className="text-lg font-semibold text-gray-800">{product.name}</h3>
-                  <p className="text-gray-600 mb-2">{product.category}</p>
-                  <p className="text-2xl font-bold text-green-500">${product.price.toFixed(2)}</p>
-                  {product.description && (
-                    <p className="text-gray-500 mt-2">{product.description}</p>
-                  )}
-                </div>
-                <div className="flex items-center space-x-4">
-                  <span className={`px-3 py-1 rounded-full text-sm ${
-                    product.is_advertised 
-                      ? 'bg-green-100 text-green-800' 
-                      : 'bg-gray-100 text-gray-800'
-                  }`}>
-                    {product.is_advertised ? 'Advertised' : 'Not Advertised'}
-                  </span>
-                  <button className="text-gray-400 hover:text-red-500">
-                    🗑️
-                  </button>
-                </div>
-              </div>
+      {showCreate && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+          <form onSubmit={createList} className="bg-white rounded-xl max-w-md w-full p-6 space-y-4">
+            <h3 className="text-xl font-semibold">New list</h3>
+            <input data-testid="list-name" value={newListName} onChange={(e) => setNewListName(e.target.value)} className={fieldClass} placeholder="Weekly groceries" required />
+            <div className="flex justify-end gap-3">
+              <button type="button" onClick={() => setShowCreate(false)} className="px-4 py-2 text-gray-600">Cancel</button>
+              <button data-testid="create-list-submit" type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg">Create</button>
             </div>
-          ))}
+          </form>
         </div>
-      )}
-
-      {/* Add Product Modal */}
-      {showAddProduct && (
-        <AddProductModal 
-          onClose={() => setShowAddProduct(false)}
-          onProductAdded={onProductsChange}
-        />
       )}
     </div>
   );
 };
 
-// Add Product Modal Component (unchanged)
 const AddProductModal = ({ onClose, onProductAdded }) => {
   const [formData, setFormData] = useState({
     name: '',
-    category: '',
+    brand: '',
+    category: 'Grocery',
+    package_size: '',
+    package_unit: 'oz',
     price: '',
     description: '',
-    is_advertised: true
+    is_advertised: true,
+    valid_from: '',
+    valid_until: '',
   });
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleInputChange = (e) => {
-    const value = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
-    setFormData({
-      ...formData,
-      [e.target.name]: value
-    });
+  const setField = (event) => {
+    const value = event.target.type === 'checkbox' ? event.target.checked : event.target.value;
+    setFormData({ ...formData, [event.target.name]: value });
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleSubmit = async (event) => {
+    event.preventDefault();
     setLoading(true);
     setError('');
-
+    const body = {
+      name: formData.name,
+      brand: formData.brand,
+      category: formData.category,
+      package_size: Number(formData.package_size),
+      package_unit: formData.package_unit,
+      price: Number(formData.price),
+      description: formData.description || null,
+      is_advertised: formData.is_advertised,
+      provenance: 'example',
+    };
+    if (formData.valid_from) body.valid_from = new Date(formData.valid_from).toISOString();
+    if (formData.valid_until) body.valid_until = new Date(formData.valid_until).toISOString();
     try {
-      await apiCall('/api/store/products', {
-        method: 'POST',
-        body: {
-          ...formData,
-          price: parseFloat(formData.price)
-        }
-      });
-
+      await apiCall('/api/store/products', { method: 'POST', body });
       onProductAdded();
       onClose();
     } catch (err) {
@@ -1611,671 +977,416 @@ const AddProductModal = ({ onClose, onProductAdded }) => {
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-xl max-w-md w-full p-6">
-        <h3 className="text-xl font-semibold text-gray-800 mb-4">Add New Product</h3>
-        
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Product Name
-            </label>
-            <input
-              type="text"
-              name="name"
-              value={formData.name}
-              onChange={handleInputChange}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-              placeholder="e.g., Organic Bananas"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Category
-            </label>
-            <input
-              type="text"
-              name="category"
-              value={formData.category}
-              onChange={handleInputChange}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-              placeholder="e.g., Produce, Dairy, Meat"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Price ($)
-            </label>
-            <input
-              type="number"
-              step="0.01"
-              name="price"
-              value={formData.price}
-              onChange={handleInputChange}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-              placeholder="0.00"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Description (Optional)
-            </label>
-            <textarea
-              name="description"
-              value={formData.description}
-              onChange={handleInputChange}
-              rows="3"
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-              placeholder="Additional product details..."
-            />
-          </div>
-
-          <div className="flex items-center">
-            <input
-              type="checkbox"
-              name="is_advertised"
-              checked={formData.is_advertised}
-              onChange={handleInputChange}
-              className="h-4 w-4 text-green-500 focus:ring-green-500 border-gray-300 rounded"
-            />
-            <label className="ml-2 block text-sm text-gray-700">
-              Advertise this product to local customers
-            </label>
-          </div>
-
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
-              {error}
-            </div>
-          )}
-
-          <div className="flex justify-end space-x-3">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={loading}
-              className="bg-green-500 hover:bg-green-600 text-white px-6 py-2 rounded-lg font-medium transition duration-200 disabled:opacity-50"
-            >
-              {loading ? 'Adding...' : 'Add Product'}
-            </button>
-          </div>
-        </form>
-      </div>
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+      <form onSubmit={handleSubmit} className="bg-white rounded-xl max-w-lg w-full p-6 space-y-3 max-h-[90vh] overflow-y-auto">
+        <h3 className="text-xl font-semibold">Example price</h3>
+        <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3">
+          This is saved as an example price, not a live shelf price. Provenance is fixed to example. Stock is not recorded.
+        </p>
+        <input data-testid="product-name" name="name" value={formData.name} onChange={setField} className={fieldClass} placeholder="Product name" required />
+        <input data-testid="product-brand" name="brand" value={formData.brand} onChange={setField} className={fieldClass} placeholder="Brand" required />
+        <input data-testid="product-category" name="category" value={formData.category} onChange={setField} className={fieldClass} placeholder="Category" required />
+        <div className="grid grid-cols-2 gap-3">
+          <input data-testid="product-size" name="package_size" value={formData.package_size} onChange={setField} className={fieldClass} placeholder="Package size" required />
+          <select data-testid="product-unit" name="package_unit" value={formData.package_unit} onChange={setField} className={fieldClass}>
+            {PACKAGE_UNITS.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
+          </select>
+        </div>
+        <input data-testid="product-price" name="price" value={formData.price} onChange={setField} className={fieldClass} placeholder="Example price amount" required />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label className="text-sm text-gray-600">Valid from
+            <input data-testid="product-valid-from" type="datetime-local" name="valid_from" value={formData.valid_from} onChange={setField} className={`${fieldClass} mt-1`} />
+          </label>
+          <label className="text-sm text-gray-600">Valid until
+            <input data-testid="product-valid-until" type="datetime-local" name="valid_until" value={formData.valid_until} onChange={setField} className={`${fieldClass} mt-1`} />
+          </label>
+        </div>
+        <textarea name="description" value={formData.description} onChange={setField} className={fieldClass} placeholder="Optional note. Do not claim this item is in stock." rows="2" />
+        <label className="flex items-center gap-2 text-sm text-gray-700">
+          <input type="checkbox" name="is_advertised" checked={formData.is_advertised} onChange={setField} />
+          Show this example price to households
+        </label>
+        <AuthError error={error} />
+        <div className="flex justify-end gap-3">
+          <button type="button" onClick={onClose} className="px-4 py-2 text-gray-600">Cancel</button>
+          <button data-testid="save-product" type="submit" disabled={loading} className="px-4 py-2 bg-green-600 text-white rounded-lg disabled:opacity-50">
+            {loading ? 'Saving...' : 'Save example price'}
+          </button>
+        </div>
+      </form>
     </div>
   );
 };
 
-// Enhanced Shopping List View with Store Prices (unchanged from previous version)
-const ShoppingListView = ({ list, onBack }) => {
-  const [items, setItems] = useState([]);
+const StoreDashboard = ({ onLogout }) => {
+  const [storeInfo, setStoreInfo] = useState(null);
+  const [subscription, setSubscription] = useState(null);
+  const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [newItemName, setNewItemName] = useState('');
-  const [showShareModal, setShowShareModal] = useState(false);
-  const [shareEmail, setShareEmail] = useState('');
-  const [sharing, setSharing] = useState(false);
-  const [refreshInterval, setRefreshInterval] = useState(null);
-  const [showPrices, setShowPrices] = useState(false);
-  const [storePrices, setStorePrices] = useState({});
+  const [activeTab, setActiveTab] = useState('products');
+  const [showAddProduct, setShowAddProduct] = useState(false);
+  const [error, setError] = useState('');
 
-  useEffect(() => {
-    fetchItems();
-    
-    // Set up polling for real-time updates every 3 seconds
-    const interval = setInterval(fetchItems, 3000);
-    setRefreshInterval(interval);
-
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [list.id]);
-
-  const fetchItems = async () => {
+  const fetchStoreData = async () => {
     try {
-      const itemsData = await apiCall(`/api/lists/${list.id}/items`);
-      setItems(itemsData);
+      const [storeData, subscriptionData, productsData] = await Promise.all([
+        apiCall('/api/store/auth/me'),
+        apiCall('/api/store/subscription'),
+        apiCall('/api/store/products'),
+      ]);
+      setStoreInfo(storeData);
+      setSubscription(subscriptionData);
+      setProducts(productsData);
     } catch (err) {
-      console.error('Failed to fetch items:', err);
+      setError(err.message);
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchStorePrices = async (itemName) => {
-    try {
-      const prices = await apiCall(`/api/products/search?query=${encodeURIComponent(itemName)}&limit=3`);
-      setStorePrices(prev => ({
-        ...prev,
-        [itemName]: prices
-      }));
-    } catch (err) {
-      console.error('Failed to fetch store prices:', err);
-    }
-  };
-
-  const addItem = async (e) => {
-    e.preventDefault();
-    if (!newItemName.trim()) return;
-
-    try {
-      await apiCall(`/api/lists/${list.id}/items`, {
-        method: 'POST',
-        body: { name: newItemName.trim() },
-      });
-
-      setNewItemName('');
-      fetchItems(); // Refresh immediately after adding
-      
-      // Fetch store prices for the new item
-      if (showPrices) {
-        fetchStorePrices(newItemName.trim());
-      }
-    } catch (err) {
-      console.error('Failed to add item:', err);
-    }
-  };
-
-  const toggleItem = async (itemId, currentStatus) => {
-    try {
-      await apiCall(`/api/items/${itemId}`, {
-        method: 'PUT',
-        body: { is_purchased: !currentStatus },
-      });
-
-      fetchItems(); // Refresh immediately after toggling
-    } catch (err) {
-      console.error('Failed to toggle item:', err);
-    }
-  };
-
-  const deleteItem = async (itemId) => {
-    try {
-      await apiCall(`/api/items/${itemId}`, {
-        method: 'DELETE',
-      });
-
-      fetchItems(); // Refresh immediately after deleting
-    } catch (err) {
-      console.error('Failed to delete item:', err);
-    }
-  };
-
-  const shareList = async (e) => {
-    e.preventDefault();
-    setSharing(true);
-
-    try {
-      await apiCall(`/api/lists/${list.id}/share`, {
-        method: 'POST',
-        body: { email: shareEmail },
-      });
-
-      setShareEmail('');
-      setShowShareModal(false);
-      alert('List shared successfully!');
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      setSharing(false);
-    }
-  };
-
-  const toggleStorePrices = () => {
-    const newShowPrices = !showPrices;
-    setShowPrices(newShowPrices);
-    
-    if (newShowPrices) {
-      // Fetch prices for all items
-      items.forEach(item => {
-        if (!item.is_purchased) {
-          fetchStorePrices(item.name);
-        }
-      });
-    }
-  };
-
-  const remainingItems = items.filter(item => !item.is_purchased);
-  const purchasedItems = items.filter(item => item.is_purchased);
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading items...</p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white shadow-sm border-b">
-        <div className="max-w-4xl mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <button
-                onClick={onBack}
-                className="text-gray-600 hover:text-gray-800"
-              >
-                ← Back
-              </button>
-              <div>
-                <h1 className="text-2xl font-bold text-gray-800">{list.name}</h1>
-                <p className="text-gray-500 text-sm">
-                  {remainingItems.length} item{remainingItems.length !== 1 ? 's' : ''} remaining
-                </p>
-              </div>
-            </div>
-            <div className="flex space-x-3">
-              <button
-                onClick={toggleStorePrices}
-                className={`px-4 py-2 rounded-lg font-medium transition duration-200 ${
-                  showPrices 
-                    ? 'bg-green-500 hover:bg-green-600 text-white' 
-                    : 'bg-gray-200 hover:bg-gray-300 text-gray-700'
-                }`}
-              >
-                {showPrices ? '💰 Prices On' : '💰 Show Prices'}
-              </button>
-              <button
-                onClick={() => setShowShareModal(true)}
-                className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg font-medium transition duration-200"
-              >
-                Share List
-              </button>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      {/* Main Content */}
-      <main className="max-w-4xl mx-auto px-4 py-8">
-        {/* Add Item Form */}
-        <div className="bg-white rounded-xl shadow-sm border p-6 mb-8">
-          <form onSubmit={addItem} className="flex space-x-4">
-            <input
-              type="text"
-              value={newItemName}
-              onChange={(e) => setNewItemName(e.target.value)}
-              className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder="Add an item to your list..."
-            />
-            <button
-              type="submit"
-              className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-lg font-medium transition duration-200"
-            >
-              Add Item
-            </button>
-          </form>
-        </div>
-
-        {/* Items List */}
-        <div className="space-y-6">
-          {/* Remaining Items */}
-          {remainingItems.length > 0 && (
-            <div className="bg-white rounded-xl shadow-sm border">
-              <div className="p-6 border-b">
-                <h2 className="text-lg font-semibold text-gray-800">Shopping List</h2>
-              </div>
-              <div className="divide-y">
-                {remainingItems.map((item) => (
-                  <div key={item.id} className="p-4">
-                    <div className="flex items-center justify-between hover:bg-gray-50">
-                      <div className="flex items-center space-x-3">
-                        <button
-                          onClick={() => toggleItem(item.id, item.is_purchased)}
-                          className="w-6 h-6 rounded-full border-2 border-gray-300 hover:border-blue-500 transition duration-200"
-                        />
-                        <div>
-                          <p className="font-medium text-gray-800">{item.name}</p>
-                          <p className="text-sm text-gray-500">Qty: {item.quantity}</p>
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => deleteItem(item.id)}
-                        className="text-gray-400 hover:text-red-500 transition duration-200"
-                      >
-                        🗑️
-                      </button>
-                    </div>
-                    
-                    {/* Store Prices */}
-                    {showPrices && storePrices[item.name] && (
-                      <div className="mt-3 ml-9 bg-gray-50 rounded-lg p-3">
-                        <p className="text-sm font-medium text-gray-700 mb-2">Local Store Prices:</p>
-                        <div className="space-y-1">
-                          {storePrices[item.name].slice(0, 3).map((result, index) => (
-                            <div key={index} className="flex justify-between items-center text-sm">
-                              <span className="text-gray-600">{result.store.store_name}</span>
-                              <span className="font-medium text-green-600">${result.product.price.toFixed(2)}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Purchased Items */}
-          {purchasedItems.length > 0 && (
-            <div className="bg-white rounded-xl shadow-sm border">
-              <div className="p-6 border-b">
-                <h2 className="text-lg font-semibold text-gray-800">Purchased ({purchasedItems.length})</h2>
-              </div>
-              <div className="divide-y">
-                {purchasedItems.map((item) => (
-                  <div key={item.id} className="p-4 flex items-center justify-between hover:bg-gray-50 opacity-60">
-                    <div className="flex items-center space-x-3">
-                      <button
-                        onClick={() => toggleItem(item.id, item.is_purchased)}
-                        className="w-6 h-6 rounded-full bg-green-500 border-2 border-green-500 flex items-center justify-center"
-                      >
-                        <span className="text-white text-xs">✓</span>
-                      </button>
-                      <div>
-                        <p className="font-medium text-gray-800 line-through">{item.name}</p>
-                        <p className="text-sm text-gray-500">Qty: {item.quantity}</p>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => deleteItem(item.id)}
-                      className="text-gray-400 hover:text-red-500 transition duration-200"
-                    >
-                      🗑️
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Empty State */}
-          {items.length === 0 && (
-            <div className="text-center py-16 bg-white rounded-xl shadow-sm border">
-              <div className="text-gray-400 text-6xl mb-4">🛒</div>
-              <h3 className="text-xl font-semibold text-gray-600 mb-2">Your list is empty</h3>
-              <p className="text-gray-500">Add some items to get started!</p>
-            </div>
-          )}
-        </div>
-      </main>
-
-      {/* Share Modal */}
-      {showShareModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl max-w-md w-full p-6">
-            <h3 className="text-xl font-semibold text-gray-800 mb-4">Share List</h3>
-            <form onSubmit={shareList}>
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Email Address
-                </label>
-                <input
-                  type="email"
-                  value={shareEmail}
-                  onChange={(e) => setShareEmail(e.target.value)}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Enter email to share with"
-                  required
-                />
-              </div>
-              <div className="flex justify-end space-x-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowShareModal(false);
-                    setShareEmail('');
-                  }}
-                  className="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={sharing}
-                  className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg font-medium transition duration-200 disabled:opacity-50"
-                >
-                  {sharing ? 'Sharing...' : 'Share List'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-// Household Dashboard Component (updated with new pricing references)
-const HouseholdDashboard = ({ onSelectList, onLogout }) => {
-  const [lists, setLists] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [newListName, setNewListName] = useState('');
-  const [creating, setCreating] = useState(false);
-  const [user, setUser] = useState(null);
-
   useEffect(() => {
-    fetchUserInfo();
-    fetchLists();
+    fetchStoreData();
   }, []);
 
-  const fetchUserInfo = async () => {
-    try {
-      const userData = await apiCall('/api/auth/me');
-      setUser(userData);
-    } catch (err) {
-      console.error('Failed to fetch user info:', err);
-    }
-  };
-
-  const fetchLists = async () => {
-    try {
-      const listsData = await apiCall('/api/lists');
-      setLists(listsData);
-    } catch (err) {
-      console.error('Failed to fetch lists:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const createList = async (e) => {
-    e.preventDefault();
-    setCreating(true);
-
-    try {
-      await apiCall('/api/lists', {
-        method: 'POST',
-        body: { name: newListName },
-      });
-
-      setNewListName('');
-      setShowCreateModal(false);
-      fetchLists();
-    } catch (err) {
-      console.error('Failed to create list:', err);
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const handleLogout = () => {
+  const logout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('userType');
     onLogout();
   };
 
+  const deleteProduct = async (productId) => {
+    await apiCall(`/api/store/products/${productId}`, { method: 'DELETE' });
+    fetchStoreData();
+  };
+
   if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading your shopping lists...</p>
-        </div>
-      </div>
-    );
+    return <div className="min-h-screen flex items-center justify-center"><LoadingSpinner message="Loading retailer account..." /></div>;
   }
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white shadow-sm border-b">
-        <div className="max-w-6xl mx-auto px-4 py-4 flex justify-between items-center">
+      <header className="bg-white border-b">
+        <div className="max-w-5xl mx-auto px-4 py-4 flex justify-between items-center">
           <div>
-            <h1 className="text-2xl font-bold text-gray-800">ShopSync</h1>
-            {user && <p className="text-gray-600">Welcome back, {user.name}!</p>}
+            <h1 className="text-2xl font-bold text-gray-800">{storeInfo?.store_name}</h1>
+            <p className="text-sm text-gray-600">{storeInfo?.city}, {storeInfo?.state} {storeInfo?.zip_code} · pilot, not billed</p>
           </div>
-          <button
-            onClick={handleLogout}
-            className="text-gray-600 hover:text-gray-800 font-medium"
-          >
-            Logout
-          </button>
+          <button data-testid="logout" type="button" onClick={logout}>Log out</button>
         </div>
       </header>
-
-      {/* Main Content */}
-      <main className="max-w-6xl mx-auto px-4 py-8">
-        <div className="flex justify-between items-center mb-8">
-          <h2 className="text-xl font-semibold text-gray-800">Your Shopping Lists</h2>
-          <button
-            onClick={() => setShowCreateModal(true)}
-            className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg font-medium transition duration-200"
-          >
-            + New List
+      <div className="max-w-5xl mx-auto px-4 pt-4 flex gap-4 text-sm">
+        {['products', 'subscription'].map((tab) => (
+          <button key={tab} type="button" data-testid={`tab-${tab}`} onClick={() => setActiveTab(tab)} className={`pb-2 border-b-2 ${activeTab === tab ? 'border-green-600 text-green-700' : 'border-transparent text-gray-500'}`}>
+            {tab}
           </button>
-        </div>
-
-        {lists.length === 0 ? (
-          <div className="text-center py-16">
-            <div className="text-gray-400 text-6xl mb-4">📝</div>
-            <h3 className="text-xl font-semibold text-gray-600 mb-2">No lists yet</h3>
-            <p className="text-gray-500 mb-6">Create your first shopping list to get started</p>
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-lg font-medium transition duration-200"
-            >
-              Create Your First List
-            </button>
-          </div>
-        ) : (
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {lists.map((list) => (
-              <div
-                key={list.id}
-                onClick={() => onSelectList(list)}
-                className="bg-white rounded-xl shadow-sm border hover:shadow-md transition duration-200 cursor-pointer p-6"
-              >
-                <h3 className="text-lg font-semibold text-gray-800 mb-2">{list.name}</h3>
-                <p className="text-gray-500 text-sm mb-4">
-                  Created {new Date(list.created_at).toLocaleDateString()}
-                </p>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-400">
-                    👥 {list.shared_with.length + 1} member{list.shared_with.length === 0 ? '' : 's'}
-                  </span>
-                  <span className="text-sm text-blue-500 font-medium">
-                    💰 Prices available
-                  </span>
+        ))}
+      </div>
+      <main className="max-w-5xl mx-auto px-4 py-6">
+        {error && <p className="text-red-700 mb-4">{error}</p>}
+        {activeTab === 'products' && (
+          <div className="space-y-4">
+            <div className="flex justify-between items-center">
+              <h2 className="text-xl font-semibold">Example prices</h2>
+              <button data-testid="open-add-product" type="button" onClick={() => setShowAddProduct(true)} className="bg-green-600 text-white px-4 py-2 rounded-lg">Add example price</button>
+            </div>
+            {products.length === 0 && <p className="text-gray-500">No example prices yet.</p>}
+            {products.map((product) => (
+              <article key={product.id} data-testid="retailer-price" className="bg-white border rounded-xl p-4 flex justify-between gap-4">
+                <div>
+                  <h3 className="font-semibold">{product.name}</h3>
+                  <p className="text-sm text-gray-600">{product.brand} · {product.package_size} {product.package_unit} · {product.category}</p>
+                  <p className="mt-1"><span className="text-xs uppercase tracking-wide text-amber-700">Example price</span> <span className="font-semibold">${product.price.toFixed(2)}</span></p>
+                  <p className="text-xs text-gray-500">{product.locality_city}, {product.locality_state} {product.locality_zip} · provenance {product.provenance}</p>
                 </div>
-              </div>
+                <button type="button" onClick={() => deleteProduct(product.id)} className="text-sm text-red-600">Delete</button>
+              </article>
             ))}
           </div>
         )}
+        {activeTab === 'subscription' && (
+          <section data-testid="billing-placeholder" className="bg-white border rounded-xl p-6 space-y-3">
+            <h2 className="text-xl font-semibold">Retailer subscription</h2>
+            <p>{subscription?.message}</p>
+            <dl className="grid sm:grid-cols-2 gap-3 text-sm">
+              <div><dt className="text-gray-500">Billing implemented</dt><dd>{subscription?.billing_implemented ? 'yes' : 'no'}</dd></div>
+              <div><dt className="text-gray-500">Account status</dt><dd>{subscription?.status}</dd></div>
+              <div><dt className="text-gray-500">Monthly fee</dt><dd>{subscription?.monthly_fee == null ? 'Unset' : subscription.monthly_fee}</dd></div>
+              <div><dt className="text-gray-500">Yearly fee</dt><dd>{subscription?.yearly_fee == null ? 'Unset' : subscription.yearly_fee}</dd></div>
+              <div><dt className="text-gray-500">Plan options reserved</dt><dd>{(subscription?.plan_options || []).join(', ') || 'monthly, yearly'}</dd></div>
+            </dl>
+            <p className="text-sm text-gray-500">No checkout button is shown because taking payment is out of scope for this pilot.</p>
+          </section>
+        )}
       </main>
-
-      {/* Create List Modal */}
-      {showCreateModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl max-w-md w-full p-6">
-            <h3 className="text-xl font-semibold text-gray-800 mb-4">Create New List</h3>
-            <form onSubmit={createList}>
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  List Name
-                </label>
-                <input
-                  type="text"
-                  value={newListName}
-                  onChange={(e) => setNewListName(e.target.value)}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="e.g., Weekly Groceries"
-                  required
-                />
-              </div>
-              <div className="flex justify-end space-x-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowCreateModal(false);
-                    setNewListName('');
-                  }}
-                  className="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={creating}
-                  className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg font-medium transition duration-200 disabled:opacity-50"
-                >
-                  {creating ? 'Creating...' : 'Create List'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+      {showAddProduct && (
+        <AddProductModal onClose={() => setShowAddProduct(false)} onProductAdded={fetchStoreData} />
       )}
     </div>
   );
 };
 
-// Main App Component (updated with enhanced UX)
+const ChangePassword = () => {
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+
+  const submit = async (event) => {
+    event.preventDefault();
+    setError('');
+    setMessage('');
+    try {
+      const response = await apiCall('/api/auth/change-password', {
+        method: 'POST',
+        body: { current_password: currentPassword, new_password: newPassword },
+      });
+      localStorage.setItem('token', response.access_token);
+      localStorage.setItem('userType', response.user_type);
+      setCurrentPassword('');
+      setNewPassword('');
+      setMessage('Password changed. Other sessions need to sign in again.');
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="mt-4 space-y-2" data-testid="change-password">
+      <p className="notebook-foot-title">Change password</p>
+      <input data-testid="current-password" type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} className="notebook-input notebook-input-small" placeholder="Current password" required />
+      <input data-testid="new-password" type="password" minLength={8} value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="notebook-input notebook-input-small" placeholder="New password" required />
+      {error && <p className="notebook-warn">{error}</p>}
+      {message && <p className="notebook-saved">{message}</p>}
+      <button type="submit" className="notebook-add-btn">Save password</button>
+    </form>
+  );
+};
+
+const ForgotPassword = ({ onBack }) => {
+  const [email, setEmail] = useState('');
+  const [message, setMessage] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const submit = async (event) => {
+    event.preventDefault();
+    setLoading(true);
+    try {
+      const response = await apiCall('/api/auth/forgot-password', { method: 'POST', body: { email } });
+      setMessage(response.message);
+    } catch (err) {
+      setMessage('If an account exists for that email, password reset instructions were sent.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="notebook-desk flex items-center justify-center p-4">
+      <form onSubmit={submit} className="notebook-sheet max-w-md w-full p-6 space-y-4">
+        <button type="button" onClick={onBack} className="notebook-text-btn">← Back</button>
+        <h1 className="notebook-title text-3xl">Forgot password</h1>
+        <p className="notebook-subtitle">We will not say whether that email has an account.</p>
+        <input data-testid="forgot-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="notebook-input notebook-input-small" placeholder="Email" required />
+        {message && <p data-testid="forgot-message" className="notebook-subtitle">{message}</p>}
+        <button data-testid="forgot-submit" type="submit" disabled={loading} className="notebook-add-btn">Send reset</button>
+      </form>
+    </div>
+  );
+};
+
+const ResetPassword = ({ token, onDone }) => {
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+
+  const submit = async (event) => {
+    event.preventDefault();
+    setError('');
+    try {
+      const response = await apiCall('/api/auth/reset-password', {
+        method: 'POST',
+        body: { token, password },
+      });
+      localStorage.setItem('token', response.access_token);
+      localStorage.setItem('userType', response.user_type);
+      window.history.replaceState({}, '', '/');
+      onDone();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  return (
+    <div className="notebook-desk flex items-center justify-center p-4">
+      <form onSubmit={submit} className="notebook-sheet max-w-md w-full p-6 space-y-4">
+        <h1 className="notebook-title text-3xl">New password</h1>
+        <input data-testid="reset-password" type="password" minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} className="notebook-input notebook-input-small" placeholder="New password" required />
+        {error && <p className="notebook-warn">{error}</p>}
+        <button data-testid="reset-submit" type="submit" className="notebook-add-btn">Save password</button>
+      </form>
+    </div>
+  );
+};
+
+const InviteAuth = ({ mode, setMode, onRegister, onLogin }) => {
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const submit = async (event) => {
+    event.preventDefault();
+    setLoading(true);
+    setError('');
+    const name = formText(event, 'name');
+    const email = formText(event, 'email');
+    const password = formText(event, 'password');
+    try {
+      const response = await apiCall(mode === 'register' ? '/api/auth/register' : '/api/auth/login', {
+        method: 'POST',
+        body: mode === 'register' ? { name, email, password } : { email, password },
+      });
+      localStorage.setItem('token', response.access_token);
+      localStorage.setItem('userType', response.user_type);
+      if (mode === 'register') onRegister();
+      else onLogin();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="mt-4 space-y-3">
+      {mode === 'register' && (
+        <input data-testid="auth-name" name="name" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} className="notebook-input notebook-input-small" placeholder="Your name" required />
+      )}
+      <input data-testid="auth-email" name="email" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} className="notebook-input notebook-input-small" placeholder="Email" required />
+      <input data-testid="auth-password" name="password" type="password" minLength={8} autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} className="notebook-input notebook-input-small" placeholder="Password" required />
+      {error && <p data-testid="form-error" className="notebook-warn">{error}</p>}
+      <button data-testid="auth-submit" type="submit" disabled={loading} className="notebook-add-btn">
+        {mode === 'register' ? 'Create account and join' : 'Sign in and join'}
+      </button>
+      <button data-testid="auth-switch" type="button" className="notebook-text-btn" onClick={() => setMode(mode === 'register' ? 'login' : 'register')}>
+        {mode === 'register' ? 'I already have an account' : 'Create an account'}
+      </button>
+    </form>
+  );
+};
+
+const InviteJoin = ({ token, signedIn, userType, onRegister, onLogin, onAccept, onLeave }) => {
+  const [preview, setPreview] = useState(null);
+  const [mode, setMode] = useState('register');
+
+  useEffect(() => {
+    let active = true;
+    apiCall(`/api/invites/${token}`)
+      .then((row) => { if (active) setPreview(row); })
+      .catch(() => { if (active) setPreview({ valid: false, message: 'This invite is not usable.' }); });
+    return () => { active = false; };
+  }, [token]);
+
+  if (!preview) {
+    return <div className="notebook-desk flex items-center justify-center"><LoadingSpinner message="Opening the invite..." /></div>;
+  }
+
+  return (
+    <div className="notebook-desk flex items-center justify-center p-4">
+      <div className="notebook-sheet max-w-md w-full p-6" data-testid="invite-join">
+        <button type="button" onClick={onLeave} className="notebook-text-btn mb-4">← Back</button>
+        <h1 data-testid="join-title" className="notebook-title text-3xl">
+          {preview.valid ? preview.message : 'Invite unavailable'}
+        </h1>
+        {!preview.valid && <p className="notebook-subtitle">{preview.message}</p>}
+        {preview.valid && signedIn && userType === 'store' && (
+          <p className="notebook-warn">Retailer accounts cannot join a household list.</p>
+        )}
+        {preview.valid && signedIn && userType === 'household' && (
+          <button data-testid="accept-invite" type="button" className="notebook-add-btn mt-4" onClick={onAccept}>
+            Join this list
+          </button>
+        )}
+        {preview.valid && !signedIn && (
+          <InviteAuth mode={mode} setMode={setMode} onRegister={onRegister} onLogin={onLogin} />
+        )}
+      </div>
+    </div>
+  );
+};
+
+function pathToken(prefix) {
+  const match = window.location.pathname.match(new RegExp(`^/${prefix}/([A-Za-z0-9_-]{20,})$`));
+  return match ? match[1] : '';
+}
+
 function App() {
-  const [currentView, setCurrentView] = useState('landing'); // landing, household, store, admin
-  const [authState, setAuthState] = useState('login'); // login, register
+  const [currentView, setCurrentView] = useState('landing');
+  const [authState, setAuthState] = useState('login');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [userType, setUserType] = useState(null);
   const [selectedList, setSelectedList] = useState(null);
   const [loading, setLoading] = useState(true);
-  const { toasts, removeToast, success, error, info } = useToast();
+  const [pendingInvite, setPendingInvite] = useState(() => pathToken('invite'));
+  const [resetToken, setResetToken] = useState(() => pathToken('reset'));
+  const [autoAccept, setAutoAccept] = useState(false);
+  const acceptingInvite = useRef(false);
+  const { toasts, removeToast, success, info } = useToast();
 
   useEffect(() => {
-    // Check if user is already logged in
     const token = localStorage.getItem('token');
     const savedUserType = localStorage.getItem('userType');
-    
-    if (token && savedUserType) {
+    if (token && savedUserType === 'household') {
       setIsAuthenticated(true);
-      setUserType(savedUserType);
-      setCurrentView(savedUserType);
-      info(`Welcome back! You're logged in as ${savedUserType}.`);
+      setUserType('household');
+    } else if (token && savedUserType === 'store') {
+      setIsAuthenticated(true);
+      setUserType('store');
+    } else if (savedUserType === 'admin') {
+      localStorage.removeItem('token');
+      localStorage.removeItem('userType');
     }
     setLoading(false);
-  }, [info]);
+  }, []);
+
+  const acceptPendingInvite = async () => {
+    const result = await apiCall(`/api/invites/${pendingInvite}/accept`, { method: 'POST' });
+    const list = await apiCall(`/api/lists/${result.list_id}`);
+    setSelectedList(list);
+    setPendingInvite('');
+    setAutoAccept(false);
+    window.history.replaceState({}, '', '/');
+  };
+
+  useEffect(() => {
+    if (!autoAccept || !isAuthenticated || userType !== 'household' || !pendingInvite) return;
+    if (acceptingInvite.current) return;
+    acceptingInvite.current = true;
+    const token = pendingInvite;
+    (async () => {
+      try {
+        const result = await apiCall(`/api/invites/${token}/accept`, { method: 'POST' });
+        const list = await apiCall(`/api/lists/${result.list_id}`);
+        setSelectedList(list);
+        setPendingInvite('');
+        setAutoAccept(false);
+        window.history.replaceState({}, '', '/');
+      } catch (err) {
+        acceptingInvite.current = false;
+        info(err.message);
+      }
+    })();
+  }, [autoAccept, isAuthenticated, userType, pendingInvite, info]);
 
   const handleAuthSuccess = (type) => {
     setIsAuthenticated(true);
     setUserType(type);
-    setCurrentView(type);
-    success(`Successfully logged in! Welcome to ShopSync.`);
+    if (pendingInvite && type === 'household') {
+      setAutoAccept(true);
+    } else {
+      setSelectedList(null);
+    }
+    success('Signed in to ListSync.');
   };
 
   const handleLogout = () => {
@@ -2283,127 +1394,113 @@ function App() {
     setUserType(null);
     setSelectedList(null);
     setCurrentView('landing');
-    info('You have been logged out successfully.');
-  };
-
-  const handleSelectList = (list) => {
-    setSelectedList(list);
-  };
-
-  const handleBackToDashboard = () => {
-    setSelectedList(null);
+    setAuthState('login');
+    info('Signed out.');
   };
 
   if (loading) {
     return (
       <ErrorBoundary>
-        <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-          <LoadingSpinner size="xl" message="Loading ShopSync..." />
+        <div className="min-h-screen flex items-center justify-center">
+          <LoadingSpinner size="xl" message="Loading ListSync..." />
         </div>
       </ErrorBoundary>
     );
+  }
+
+  let screen = null;
+  if (resetToken) {
+    screen = (
+      <ResetPassword
+        token={resetToken}
+        onDone={() => {
+          setResetToken('');
+          setIsAuthenticated(true);
+          setUserType('household');
+          setCurrentView('household');
+        }}
+      />
+    );
+  } else if (pendingInvite && !(isAuthenticated && userType === 'household' && selectedList && !autoAccept)) {
+    screen = (
+      <InviteJoin
+        token={pendingInvite}
+        signedIn={isAuthenticated}
+        userType={userType}
+        onRegister={() => {
+          setAutoAccept(true);
+          handleAuthSuccess('household');
+        }}
+        onLogin={() => {
+          setAutoAccept(true);
+          handleAuthSuccess('household');
+        }}
+        onAccept={() => {
+          acceptPendingInvite().catch((err) => info(err.message));
+        }}
+        onLeave={() => {
+          setPendingInvite('');
+          window.history.replaceState({}, '', '/');
+        }}
+      />
+    );
+  } else if (!isAuthenticated && currentView === 'forgot-password') {
+    screen = <ForgotPassword onBack={() => setCurrentView('household-login')} />;
+  } else if (!isAuthenticated && currentView === 'landing') {
+    screen = (
+      <LandingPage
+        onHouseholdLogin={() => {
+          setAuthState('login');
+          setCurrentView('household-login');
+        }}
+        onStoreLogin={() => {
+          setAuthState('login');
+          setCurrentView('store-login');
+        }}
+      />
+    );
+  } else if (!isAuthenticated && currentView === 'household-login') {
+    screen = authState === 'login' ? (
+      <HouseholdLogin
+        onLoginSuccess={handleAuthSuccess}
+        switchToRegister={() => setAuthState('register')}
+        onForgot={() => setCurrentView('forgot-password')}
+        onBack={() => setCurrentView('landing')}
+      />
+    ) : (
+      <HouseholdRegister
+        onRegisterSuccess={handleAuthSuccess}
+        switchToLogin={() => setAuthState('login')}
+        onBack={() => setCurrentView('landing')}
+      />
+    );
+  } else if (!isAuthenticated && currentView === 'store-login') {
+    screen = authState === 'login' ? (
+      <StoreLogin
+        onLoginSuccess={handleAuthSuccess}
+        switchToRegister={() => setAuthState('register')}
+        onBack={() => setCurrentView('landing')}
+      />
+    ) : (
+      <StoreRegister
+        onRegisterSuccess={handleAuthSuccess}
+        switchToLogin={() => setAuthState('login')}
+        onBack={() => setCurrentView('landing')}
+      />
+    );
+  } else if (isAuthenticated && userType === 'store') {
+    screen = <StoreDashboard onLogout={handleLogout} />;
+  } else if (isAuthenticated && userType === 'household' && selectedList) {
+    screen = <ShoppingListView list={selectedList} onBack={() => setSelectedList(null)} />;
+  } else if (isAuthenticated && userType === 'household') {
+    screen = <HouseholdDashboard onSelectList={setSelectedList} onLogout={handleLogout} />;
   }
 
   return (
     <ErrorBoundary>
       <div className="app">
         <ToastContainer toasts={toasts} removeToast={removeToast} />
-        
-        {/* Show appropriate view based on authentication and user type */}
-        {!isAuthenticated ? (
-          <>
-            {currentView === 'landing' && (
-              <LandingPage 
-                onHouseholdLogin={() => setCurrentView('household-login')}
-                onStoreLogin={() => setCurrentView('store-login')}
-                onAdminLogin={() => setCurrentView('admin-login')}
-              />
-            )}
-
-            {currentView === 'admin-login' && (
-              <AdminLogin
-                onLoginSuccess={handleAuthSuccess}
-                onBack={() => setCurrentView('landing')}
-                showToast={{ success, error }}
-              />
-            )}
-
-            {currentView === 'household-login' && (
-              <>
-                {authState === 'login' ? (
-                  <HouseholdLogin
-                    onLoginSuccess={handleAuthSuccess}
-                    switchToRegister={() => setAuthState('register')}
-                    onBack={() => setCurrentView('landing')}
-                    showToast={{ success, error }}
-                  />
-                ) : (
-                  <HouseholdRegister
-                    onRegisterSuccess={handleAuthSuccess}
-                    switchToLogin={() => setAuthState('login')}
-                    onBack={() => setCurrentView('landing')}
-                    showToast={{ success, error }}
-                  />
-                )}
-              </>
-            )}
-
-            {currentView === 'store-login' && (
-              <>
-                {authState === 'login' ? (
-                  <StoreLogin
-                    onLoginSuccess={handleAuthSuccess}
-                    switchToRegister={() => setAuthState('register')}
-                    onBack={() => setCurrentView('landing')}
-                    showToast={{ success, error }}
-                  />
-                ) : (
-                  <StoreRegister
-                    onRegisterSuccess={handleAuthSuccess}
-                    switchToLogin={() => setAuthState('login')}
-                    onBack={() => setCurrentView('landing')}
-                    showToast={{ success, error }}
-                  />
-                )}
-              </>
-            )}
-          </>
-        ) : (
-          <>
-            {/* Authenticated views */}
-            {userType === 'admin' && (
-              <AdminDashboard 
-                onLogout={handleLogout} 
-                showToast={{ success, error, info }}
-              />
-            )}
-
-            {userType === 'store' && (
-              <StoreDashboard 
-                onLogout={handleLogout}
-                showToast={{ success, error, info }}
-              />
-            )}
-
-            {userType === 'household' && (
-              <>
-                {selectedList ? (
-                  <ShoppingListView
-                    list={selectedList}
-                    onBack={handleBackToDashboard}
-                    showToast={{ success, error, info }}
-                  />
-                ) : (
-                  <HouseholdDashboard
-                    onSelectList={handleSelectList}
-                    onLogout={handleLogout}
-                    showToast={{ success, error, info }}
-                  />
-                )}
-              </>
-            )}
-          </>
-        )}
+        {screen}
       </div>
     </ErrorBoundary>
   );

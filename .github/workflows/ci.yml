@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "cursor/**"
+
+jobs:
+  backend:
+    name: Backend pytest
+    runs-on: ubuntu-latest
+    services:
+      mongo:
+        image: mongo:7.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install API and test dependencies
+        run: python -m pip install -r backend/requirements-dev.txt
+      - name: Run the pilot suite against MongoDB
+        env:
+          MONGO_URL: mongodb://127.0.0.1:27017
+          SECRET_KEY: ci-secret-key-not-a-default-value-0123456789
+          DB_NAME: listsync_pilot_test
+          CORS_ORIGINS: http://localhost:3000
+        run: python -m pytest tests/test_pilot_api.py tests/test_live_server.py tests/test_access_links.py tests/test_auth_persistence.py -q --tb=short
+
+  frontend:
+    name: Frontend production build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: yarn
+          cache-dependency-path: frontend/yarn.lock
+      - name: Install dependencies and build
+        working-directory: frontend
+        env:
+          CI: "true"
+        run: |
+          yarn install --frozen-lockfile
+          yarn build

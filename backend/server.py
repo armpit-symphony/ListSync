@@ -1,45 +1,161 @@
-from fastapi import FastAPI, HTTPException, Depends, status, Request, Header
+"""ListSync household pilot API.
+
+Continues the existing FastAPI + MongoDB ShopSync service. Consumer lists stay
+free. Retailer subscription billing, outgoing email, the admin console, and
+live shelf prices are intentionally disabled in this pilot.
+"""
+
+from fastapi import FastAPI, HTTPException, Depends, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, EmailStr
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, EmailStr, Field
 from pymongo import MongoClient
+from pymongo.errors import DuplicateKeyError
 from passlib.context import CryptContext
 from jose import JWTError, jwt
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 import os
+import re
+import json
 import uuid
-from typing import List, Optional
-from enum import Enum
-import stripe
-import paypalrestsdk
-from cryptography.fernet import Fernet
-from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
-from jinja2 import Template
 import asyncio
+import time
+import secrets
+import hashlib
+import smtplib
+from email.message import EmailMessage
+from typing import List, Optional, Dict, Set
+from enum import Enum
 
-# Environment variables
-MONGO_URL = os.environ.get('MONGO_URL', 'mongodb://localhost:27017/')
-SECRET_KEY = "your-secret-key-change-in-production"
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent / ".env", override=False)
+load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=False)
+
+INSECURE_SECRETS = {
+    "",
+    "your-secret-key-change-in-production",
+    "admin-secret-key-change-in-production",
+    "changeme",
+    "secret",
+    "dev",
+    "test",
+}
+
+
+def require_secret() -> str:
+    secret = os.environ.get("SECRET_KEY", "").strip()
+    if secret in INSECURE_SECRETS or len(secret) < 32:
+        raise RuntimeError(
+            "SECRET_KEY must be a unique value at least 32 characters long. "
+            "Refusing the historical hardcoded JWT secret. "
+            "Generate one with: openssl rand -hex 32"
+        )
+    return secret
+
+
+SECRET_KEY = require_secret()
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30 * 24 * 60  # 30 days
-ADMIN_SECRET_KEY = "admin-secret-key-change-in-production"
-ENCRYPTION_KEY = Fernet.generate_key()  # In production, store securely
-cipher_suite = Fernet(ENCRYPTION_KEY)
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.environ.get("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
+MONGO_URL = os.environ.get("MONGO_URL", "mongodb://127.0.0.1:27017")
+DB_NAME = os.environ.get("DB_NAME", "shopping_app")
 
-app = FastAPI()
+raw_origins = os.environ.get(
+    "CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
+)
+ALLOWED_ORIGINS = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
+if not ALLOWED_ORIGINS or "*" in ALLOWED_ORIGINS:
+    raise RuntimeError(
+        "CORS_ORIGINS must be a comma-separated list of explicit origins. "
+        "A wildcard origin is refused, including together with credentials."
+    )
 
-# CORS middleware
+PILOT_BILLING_DETAIL = (
+    "Retailer subscription billing is not implemented. "
+    "Monthly and yearly plans are placeholders only. "
+    "Fee amounts are unset. No payment is collected and no card data is accepted."
+)
+BASKET_PLACEHOLDER = (
+    "Whole-basket retailer offers are not implemented. "
+    "No retailer can bid on, price, or fulfill an entire household list in this pilot. "
+    "Per-item example prices are not a basket total and do not imply that a product is in stock."
+)
+EXAMPLE_PRICE_LABEL = "Example price"
+AVAILABILITY_NOTE = "Availability is not known and is not claimed."
+
+# Spelling aliases only. Values are never converted across units (16 oz stays distinct from 1 lb).
+UNIT_ALIASES = {
+    "oz": "oz",
+    "ounce": "oz",
+    "ounces": "oz",
+    "lb": "lb",
+    "lbs": "lb",
+    "pound": "lb",
+    "pounds": "lb",
+    "g": "g",
+    "gram": "g",
+    "grams": "g",
+    "kg": "kg",
+    "kilogram": "kg",
+    "kilograms": "kg",
+    "ml": "ml",
+    "milliliter": "ml",
+    "milliliters": "ml",
+    "millilitre": "ml",
+    "millilitres": "ml",
+    "l": "l",
+    "liter": "l",
+    "liters": "l",
+    "litre": "l",
+    "litres": "l",
+    "floz": "floz",
+    "fl oz": "floz",
+    "fluid ounce": "floz",
+    "fluid ounces": "floz",
+    "gal": "gal",
+    "gallon": "gal",
+    "gallons": "gal",
+    "pt": "pt",
+    "pint": "pt",
+    "pints": "pt",
+    "qt": "qt",
+    "quart": "qt",
+    "quarts": "qt",
+    "count": "count",
+    "ct": "count",
+    "each": "count",
+    "ea": "count",
+}
+ALLOWED_UNITS = sorted(set(UNIT_ALIASES.values()))
+
+app = FastAPI(title="ListSync", version="pilot")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
 )
 
-# MongoDB setup
-client = MongoClient(MONGO_URL)
-db = client.shopping_app
+client = MongoClient(MONGO_URL, serverSelectionTimeoutMS=2000)
+startup_deadline = time.time() + float(os.environ.get("MONGO_STARTUP_TIMEOUT", "40"))
+last_mongo_error = None
+while True:
+    try:
+        client.admin.command("ping")
+        last_mongo_error = None
+        break
+    except Exception as exc:
+        last_mongo_error = exc
+        if time.time() >= startup_deadline:
+            raise RuntimeError(
+                f"Cannot reach MongoDB. Start MongoDB and set MONGO_URL. ({exc})"
+            ) from exc
+        time.sleep(1)
+
+db = client[DB_NAME]
 users_collection = db.users
 lists_collection = db.shopping_lists
 items_collection = db.items
@@ -49,17 +165,47 @@ store_products_collection = db.store_products
 store_locations_collection = db.store_locations
 admin_users_collection = db.admin_users
 payment_config_collection = db.payment_config
+invites_collection = db.list_invites
+password_resets_collection = db.password_resets
 
-# Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-# JWT token handling
 security = HTTPBearer()
 
-# Enums
+_listeners: Dict[str, Set[asyncio.Queue]] = {}
+_reset_ip_hits: Dict[str, List[datetime]] = {}
+INVITE_DAYS = 7
+RESET_HOURS = 1
+RESET_ACCOUNT_LIMIT = 3
+RESET_IP_LIMIT = 10
+FORGOT_MESSAGE = "If an account exists for that email, password reset instructions were sent."
+INVITE_UNUSABLE = "This invite is not usable."
+RESET_UNUSABLE = "This reset link is not usable."
+
+
+def ensure_indexes():
+    users_collection.create_index("email", unique=True)
+    users_collection.create_index("id", unique=True)
+    store_users_collection.create_index("email", unique=True)
+    store_users_collection.create_index("id", unique=True)
+    lists_collection.create_index("id", unique=True)
+    lists_collection.create_index("shared_with")
+    items_collection.create_index("id", unique=True)
+    items_collection.create_index("list_id")
+    store_products_collection.create_index("id", unique=True)
+    store_products_collection.create_index([("name_key", 1), ("is_advertised", 1)])
+    invites_collection.create_index("token_hash", unique=True)
+    invites_collection.create_index("list_id")
+    password_resets_collection.create_index("token_hash", unique=True)
+    password_resets_collection.create_index([("user_id", 1), ("created_at", 1)])
+
+
+ensure_indexes()
+
+
 class SubscriptionPlan(str, Enum):
     MONTHLY = "monthly"
     YEARLY = "yearly"
+
 
 class SubscriptionStatus(str, Enum):
     ACTIVE = "active"
@@ -68,38 +214,42 @@ class SubscriptionStatus(str, Enum):
     TRIAL = "trial"
     PAST_DUE = "past_due"
     CANCELED = "canceled"
+    PILOT_UNBILLED = "pilot_unbilled"
 
-class UserType(str, Enum):
-    HOUSEHOLD = "household"
-    STORE = "store"
-    ADMIN = "admin"
 
-class PaymentProvider(str, Enum):
-    STRIPE = "stripe"
-    PAYPAL = "paypal"
-
-# Pydantic models for household users (existing)
 class UserCreate(BaseModel):
     name: str
     email: EmailStr
     password: str
 
+
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
+
 
 class User(BaseModel):
     id: str
     name: str
     email: str
     created_at: datetime
+    home_zip: Optional[str] = None
+    home_city: Optional[str] = None
+    home_state: Optional[str] = None
+
+
+class HouseholdProfileUpdate(BaseModel):
+    home_zip: Optional[str] = None
+    home_city: Optional[str] = None
+    home_state: Optional[str] = None
+
 
 class Token(BaseModel):
     access_token: str
     token_type: str
     user_type: str
 
-# Pydantic models for store users
+
 class StoreUserCreate(BaseModel):
     store_name: str
     email: EmailStr
@@ -110,9 +260,11 @@ class StoreUserCreate(BaseModel):
     zip_code: str
     phone: Optional[str] = None
 
+
 class StoreUserLogin(BaseModel):
     email: EmailStr
     password: str
+
 
 class StoreUser(BaseModel):
     id: str
@@ -122,51 +274,21 @@ class StoreUser(BaseModel):
     city: str
     state: str
     zip_code: str
-    phone: Optional[str]
+    phone: Optional[str] = None
     subscription_status: SubscriptionStatus
-    subscription_plan: Optional[SubscriptionPlan]
-    subscription_expires: Optional[datetime]
+    subscription_plan: Optional[SubscriptionPlan] = None
+    subscription_expires: Optional[datetime] = None
     created_at: datetime
 
-# Pydantic models for admin users
-class AdminUserCreate(BaseModel):
-    name: str
-    email: EmailStr
-    password: str
 
-class AdminUserLogin(BaseModel):
-    email: EmailStr
-    password: str
-
-class AdminUser(BaseModel):
+class StorePublic(BaseModel):
     id: str
-    name: str
-    email: str
-    created_at: datetime
+    store_name: str
+    address: str
+    city: str
+    state: str
+    zip_code: str
 
-# Payment and subscription models
-class StoreSubscriptionCreate(BaseModel):
-    plan: SubscriptionPlan
-    provider: PaymentProvider
-
-class StoreSubscription(BaseModel):
-    id: str
-    store_id: str
-    plan: SubscriptionPlan
-    status: SubscriptionStatus
-    provider: PaymentProvider
-    subscription_id: Optional[str]
-    start_date: datetime
-    end_date: datetime
-    monthly_price: float
-    created_at: datetime
-
-class PaymentConfigUpdate(BaseModel):
-    stripe_secret_key: Optional[str] = None
-    stripe_publishable_key: Optional[str] = None
-    stripe_endpoint_secret: Optional[str] = None
-    paypal_client_id: Optional[str] = None
-    paypal_client_secret: Optional[str] = None
 
 class StoreProductCreate(BaseModel):
     name: str
@@ -174,6 +296,13 @@ class StoreProductCreate(BaseModel):
     price: float
     description: Optional[str] = None
     is_advertised: bool = True
+    brand: str
+    package_size: float
+    package_unit: str
+    valid_from: Optional[datetime] = None
+    valid_until: Optional[datetime] = None
+    provenance: Optional[str] = "example"
+
 
 class StoreProduct(BaseModel):
     id: str
@@ -181,18 +310,53 @@ class StoreProduct(BaseModel):
     name: str
     category: str
     price: float
-    description: Optional[str]
-    is_advertised: bool
+    description: Optional[str] = None
+    is_advertised: bool = True
     created_at: datetime
+    brand: Optional[str] = None
+    package_size: Optional[float] = None
+    package_unit: Optional[str] = None
+    currency: str = "USD"
+    provenance: str = "example"
+    price_label: str = EXAMPLE_PRICE_LABEL
+    valid_from: Optional[datetime] = None
+    valid_until: Optional[datetime] = None
+    locality_zip: Optional[str] = None
+    locality_city: Optional[str] = None
+    locality_state: Optional[str] = None
+    updated_at: Optional[datetime] = None
 
-class ProductSearchResult(BaseModel):
-    product: StoreProduct
-    store: StoreUser
-    distance: Optional[float] = None
 
-# Existing household models
+class ExamplePrice(BaseModel):
+    product_id: str
+    store_id: str
+    store_name: str
+    store_address: str
+    locality_city: Optional[str] = None
+    locality_state: Optional[str] = None
+    locality_zip: Optional[str] = None
+    locality_relation: str
+    name: str
+    brand: Optional[str] = None
+    package_size: Optional[float] = None
+    package_unit: Optional[str] = None
+    price: float
+    currency: str = "USD"
+    price_label: str = EXAMPLE_PRICE_LABEL
+    provenance: str = "example"
+    name_match: str = "exact"
+    comparable: bool
+    comparability_reasons: List[str]
+    valid_from: Optional[datetime] = None
+    valid_until: Optional[datetime] = None
+    validity_note: str
+    availability: Optional[str] = None
+    availability_note: str = AVAILABILITY_NOTE
+
+
 class ShoppingListCreate(BaseModel):
     name: str
+
 
 class ShoppingList(BaseModel):
     id: str
@@ -201,12 +365,19 @@ class ShoppingList(BaseModel):
     shared_with: List[str]
     created_at: datetime
 
+
 class ShareListRequest(BaseModel):
     email: EmailStr
 
+
 class ItemCreate(BaseModel):
     name: str
-    quantity: Optional[str] = "1"
+    quantity: Optional[str] = None
+    quantity_count: Optional[float] = None
+    brand: Optional[str] = None
+    package_size: Optional[float] = None
+    package_unit: Optional[str] = None
+
 
 class Item(BaseModel):
     id: str
@@ -216,32 +387,183 @@ class Item(BaseModel):
     is_purchased: bool
     added_by: str
     created_at: datetime
+    brand: Optional[str] = None
+    package_size: Optional[float] = None
+    package_unit: Optional[str] = None
+    quantity_count: Optional[float] = None
+    added_by_name: Optional[str] = None
+
 
 class ItemUpdate(BaseModel):
     is_purchased: bool
 
-# Helper functions
+
+class BasketOfferPlaceholder(BaseModel):
+    implemented: bool = False
+    feature: str = "whole_basket_retailer_offer"
+    list_id: str
+    offers: List[str] = Field(default_factory=list)
+    message: str
+
+
+def as_naive_utc(value: Optional[datetime]) -> Optional[datetime]:
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
+def name_key(value: str) -> str:
+    return " ".join(value.strip().lower().split())
+
+
+def clean_unit_token(value: str) -> str:
+    return " ".join(value.strip().lower().replace(".", "").split())
+
+
+def canonical_unit_or_none(value: Optional[str]) -> Optional[str]:
+    if value is None or not str(value).strip():
+        return None
+    return UNIT_ALIASES.get(clean_unit_token(str(value)))
+
+
+def require_unit(value: str) -> str:
+    unit = canonical_unit_or_none(value)
+    if not unit:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported package unit '{value}'. Allowed units: {', '.join(ALLOWED_UNITS)}. "
+            "Units are not converted into each other.",
+        )
+    return unit
+
+
+def validate_password(password: str):
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
+    if len(password.encode("utf-8")) > 72:
+        raise HTTPException(status_code=400, detail="Password must be at most 72 bytes.")
+
+
 def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
+    try:
+        return pwd_context.verify(plain_password, hashed_password)
+    except Exception:
+        return False
+
 
 def get_password_hash(password):
+    validate_password(password)
     return pwd_context.hash(password)
 
-def encrypt_data(data: str) -> str:
-    return cipher_suite.encrypt(data.encode()).decode()
 
-def decrypt_data(encrypted_data: str) -> str:
-    return cipher_suite.decrypt(encrypted_data.encode()).decode()
+def hash_token(raw: str) -> str:
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def new_secret_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def household_token(user_id: str, token_version: int = 0) -> str:
+    return create_access_token(
+        data={"sub": user_id, "user_type": "household", "tv": int(token_version or 0)},
+        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
+    )
+
+
+def first_name(full_name: Optional[str]) -> str:
+    parts = (full_name or "").strip().split()
+    return parts[0] if parts else "Someone"
+
+
+def public_origin() -> str:
+    return os.environ.get("PUBLIC_ORIGIN", "https://listsync.sparkpitlabs.com").rstrip("/")
+
+
+def smtp_configured() -> bool:
+    return bool(os.environ.get("SMTP_HOST", "").strip())
+
+
+def send_reset_email(to_email: str, link: str) -> None:
+    """Send a reset link only when SMTP is configured. Never log the link."""
+    if not smtp_configured():
+        return
+    message = EmailMessage()
+    message["Subject"] = "Reset your ListSync password"
+    message["From"] = os.environ.get("SMTP_FROM", "noreply@listsync.sparkpitlabs.com")
+    message["To"] = to_email
+    message.set_content(
+        "Use this one-time link to choose a new ListSync password. It expires in one hour.\n\n"
+        f"{link}\n"
+    )
+    port = int(os.environ.get("SMTP_PORT", "587"))
+    with smtplib.SMTP(os.environ["SMTP_HOST"], port, timeout=20) as smtp:
+        smtp.starttls()
+        user = os.environ.get("SMTP_USER", "").strip()
+        password = os.environ.get("SMTP_PASSWORD", "")
+        if user:
+            smtp.login(user, password)
+        smtp.send_message(message)
+
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
+    expire = datetime.utcnow() + (
+        expires_delta if expires_delta else timedelta(minutes=15)
+    )
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def resync_event(reason: str) -> dict:
+    """Tell one household session to reload its own lists from the API.
+
+    The payload has no list contents. A retailer never receives it, because
+    only household event streams are registered.
+    """
+    return {
+        "type": "resync",
+        "reason": reason,
+        "at": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+def offer_event(queue: asyncio.Queue, payload: dict):
+    """Queue one event. If the queue is full, drop the stale backlog and leave a resync."""
+    try:
+        queue.put_nowait(payload)
+        return
+    except asyncio.QueueFull:
+        pass
+    try:
+        while True:
+            queue.get_nowait()
+    except asyncio.QueueEmpty:
+        pass
+    queue.put_nowait(resync_event("queue_overflow"))
+
+
+def publish(user_ids: List[str], event: dict):
+    payload = dict(event)
+    payload["at"] = datetime.utcnow().isoformat() + "Z"
+    for user_id in user_ids:
+        for queue in list(_listeners.get(user_id, ())):
+            offer_event(queue, payload)
+
+
+def member_ids(shopping_list: dict) -> List[str]:
+    ids = [shopping_list["created_by"]]
+    ids.extend(shopping_list.get("shared_with") or [])
+    return list(dict.fromkeys(ids))
+
+
+def without_mongo_id(document: dict) -> dict:
+    cleaned = dict(document)
+    cleaned.pop("_id", None)
+    return cleaned
+
 
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     credentials_exception = HTTPException(
@@ -252,1145 +574,1041 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     try:
         payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
         user_id: str = payload.get("sub")
-        user_type: str = payload.get("user_type", "household")
-        if user_id is None:
+        user_type: str = payload.get("user_type")
+        if user_id is None or user_type is None:
             raise credentials_exception
     except JWTError:
         raise credentials_exception
-    
+
     if user_type == "household":
         user = users_collection.find_one({"id": user_id})
     elif user_type == "store":
         user = store_users_collection.find_one({"id": user_id})
-    else:  # admin
-        user = admin_users_collection.find_one({"id": user_id})
-    
+    elif user_type == "admin":
+        user = None
+    else:
+        raise credentials_exception
+
     if user is None:
         raise credentials_exception
-    
+
+    if user_type == "household":
+        current_version = int(user.get("token_version") or 0)
+        claimed = payload.get("tv", 0)
+        try:
+            claimed = int(claimed)
+        except (TypeError, ValueError):
+            raise credentials_exception
+        if claimed != current_version:
+            raise credentials_exception
+
+    user = without_mongo_id(user)
     user["user_type"] = user_type
     return user
 
-async def get_current_store_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    user = await get_current_user(credentials)
-    if user.get("user_type") != "store":
+
+async def get_current_store_user(current_user=Depends(get_current_user)):
+    if current_user.get("user_type") != "store":
+        raise HTTPException(status_code=403, detail="Retailer access required")
+    return current_user
+
+
+def require_household(user):
+    if user.get("user_type") != "household":
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Store access required"
+            status_code=403,
+            detail="Household access required. Retailer accounts cannot browse household lists.",
         )
-    return user
 
-async def get_current_admin_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    user = await get_current_user(credentials)
-    if user.get("user_type") != "admin":
+
+def load_list_for_member(list_id: str, user) -> dict:
+    require_household(user)
+    shopping_list = lists_collection.find_one({"id": list_id})
+    if not shopping_list:
+        raise HTTPException(status_code=404, detail="Shopping list not found")
+    allowed = member_ids(shopping_list)
+    if user["id"] not in allowed:
+        raise HTTPException(status_code=404, detail="Shopping list not found")
+    return shopping_list
+
+
+def load_list_for_owner(list_id: str, user) -> dict:
+    shopping_list = load_list_for_member(list_id, user)
+    if shopping_list["created_by"] != user["id"]:
+        raise HTTPException(status_code=403, detail="Only the list owner can do that.")
+    return shopping_list
+
+
+def display_name(user_id: str) -> Optional[str]:
+    user = users_collection.find_one({"id": user_id}, {"name": 1})
+    if not user:
+        return None
+    return user.get("name")
+
+
+def present_item(item: dict) -> Item:
+    payload = without_mongo_id(item)
+    payload["added_by_name"] = display_name(item.get("added_by", ""))
+    return Item(**payload)
+
+
+def normalize_state(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    text = " ".join(value.strip().split())
+    if not text:
+        return None
+    if len(text) == 2:
+        return text.upper()
+    return text
+
+
+def normalize_zip(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if not re.fullmatch(r"\d{5}(-\d{4})?", text):
+        raise HTTPException(status_code=400, detail="ZIP code must be 5 digits or ZIP+4.")
+    return text
+
+
+def validate_product_payload(product_data: StoreProductCreate):
+    if product_data.provenance not in (None, "", "example"):
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required"
+            status_code=400,
+            detail="Only example prices can be saved in this pilot. Live shelf prices are not accepted.",
         )
-    return user
+    if product_data.price <= 0 or product_data.price != product_data.price:
+        raise HTTPException(status_code=400, detail="Example price must be a number greater than zero.")
+    if product_data.package_size <= 0:
+        raise HTTPException(status_code=400, detail="Package size must be greater than zero.")
+    if not product_data.brand.strip():
+        raise HTTPException(status_code=400, detail="Brand is required so prices can be compared.")
+    if not product_data.name.strip():
+        raise HTTPException(status_code=400, detail="Product name is required.")
+    unit = require_unit(product_data.package_unit)
+    if product_data.valid_from and product_data.valid_until:
+        if product_data.valid_until <= product_data.valid_from:
+            raise HTTPException(status_code=400, detail="valid_until must be after valid_from.")
+    return unit
 
-async def get_payment_config():
-    """Get decrypted payment configuration"""
-    config = payment_config_collection.find_one({})
-    if not config:
-        return {}
-    
-    decrypted_config = {}
-    for key, value in config.items():
-        if key.startswith(('stripe_', 'paypal_')) and value:
-            try:
-                decrypted_config[key] = decrypt_data(value)
-            except:
-                decrypted_config[key] = value
-        else:
-            decrypted_config[key] = value
-    
-    return decrypted_config
 
-# Initialize admin user if not exists
-def create_default_admin():
-    if not admin_users_collection.find_one({}):
-        admin_id = str(uuid.uuid4())
-        admin_user = {
-            "id": admin_id,
-            "name": "System Admin",
-            "email": "admin@shopsync.com",
-            "password_hash": get_password_hash("admin123"),  # Change this!
-            "created_at": datetime.utcnow()
-        }
-        admin_users_collection.insert_one(admin_user)
-        print("Default admin created: admin@shopsync.com / admin123")
-
-# Create default admin on startup
-create_default_admin()
-
-# Email configuration
-def get_mail_config():
-    """Configure email settings - can be made configurable via admin panel"""
-    conf = ConnectionConfig(
-        MAIL_USERNAME=os.getenv('MAIL_USERNAME', 'noreply@shopsync.com'),
-        MAIL_PASSWORD=os.getenv('MAIL_PASSWORD', ''),
-        MAIL_FROM=os.getenv('MAIL_FROM', 'noreply@shopsync.com'),
-        MAIL_PORT=587,
-        MAIL_SERVER=os.getenv('MAIL_SERVER', 'smtp.gmail.com'),
-        MAIL_STARTTLS=True,
-        MAIL_SSL_TLS=False,
-        USE_CREDENTIALS=True,
-        VALIDATE_CERTS=True
-    )
-    return FastMail(conf)
-
-# Email templates
-WELCOME_EMAIL_TEMPLATE = """
-<!DOCTYPE html>
-<html>
-<head>
-    <style>
-        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
-        .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
-        .button { background: #4F46E5; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0; }
-        .footer { text-align: center; margin-top: 30px; color: #666; font-size: 12px; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🎉 Welcome to ShopSync!</h1>
-            <p>Your shared shopping list platform</p>
-        </div>
-        <div class="content">
-            <h2>Hi {{name}}!</h2>
-            <p>Welcome to ShopSync - the shared shopping list platform connecting households with local stores.</p>
-            
-            {% if user_type == 'household' %}
-            <p><strong>You can now:</strong></p>
-            <ul>
-                <li>✅ Create shared shopping lists with your household</li>
-                <li>✅ See real-time updates when others add items</li>
-                <li>✅ View local store prices for your items</li>
-                <li>✅ Never forget items again!</li>
-            </ul>
-            {% elif user_type == 'store' %}
-            <p><strong>Your 7-day free trial has started!</strong></p>
-            <ul>
-                <li>✅ Add your products and prices</li>
-                <li>✅ Advertise to local customers</li>
-                <li>✅ Increase foot traffic to your store</li>
-                <li>✅ Only $12/month after trial</li>
-            </ul>
-            {% endif %}
-            
-            <a href="{{app_url}}" class="button">Get Started Now</a>
-            
-            <p>If you have any questions, just reply to this email - we're here to help!</p>
-            
-            <p>Best regards,<br>The ShopSync Team</p>
-        </div>
-        <div class="footer">
-            <p>© 2025 ShopSync. All rights reserved.</p>
-        </div>
-    </div>
-</body>
-</html>
-"""
-
-SUBSCRIPTION_CONFIRMATION_TEMPLATE = """
-<!DOCTYPE html>
-<html>
-<head>
-    <style>
-        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-        .header { background: #10B981; color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
-        .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
-        .receipt { background: white; padding: 20px; border-radius: 5px; margin: 20px 0; }
-        .footer { text-align: center; margin-top: 30px; color: #666; font-size: 12px; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🎊 Subscription Confirmed!</h1>
-            <p>Thank you for choosing ShopSync</p>
-        </div>
-        <div class="content">
-            <h2>Hi {{store_name}}!</h2>
-            <p>Your subscription to ShopSync has been successfully activated!</p>
-            
-            <div class="receipt">
-                <h3>Subscription Details:</h3>
-                <p><strong>Plan:</strong> {{plan}} Plan</p>
-                <p><strong>Price:</strong> ${{price}}/{{interval}}</p>
-                <p><strong>Start Date:</strong> {{start_date}}</p>
-                <p><strong>Next Billing:</strong> {{next_billing}}</p>
-            </div>
-            
-            <p><strong>What's Next?</strong></p>
-            <ul>
-                <li>✅ Add your products and prices</li>
-                <li>✅ Start advertising to local customers</li>
-                <li>✅ Monitor your performance in the dashboard</li>
-                <li>✅ Increase your store's visibility</li>
-            </ul>
-            
-            <p>Your products will now be visible to households in your area when they create shopping lists!</p>
-            
-            <p>Best regards,<br>The ShopSync Team</p>
-        </div>
-        <div class="footer">
-            <p>© 2025 ShopSync. All rights reserved.</p>
-        </div>
-    </div>
-</body>
-</html>
-"""
-
-async def send_welcome_email(name: str, email: str, user_type: str):
-    """Send welcome email to new users"""
-    try:
-        fastmail = get_mail_config()
-        
-        template = Template(WELCOME_EMAIL_TEMPLATE)
-        html_content = template.render(
-            name=name,
-            user_type=user_type,
-            app_url=os.getenv('REACT_APP_FRONTEND_URL', 'http://localhost:3000')
-        )
-        
-        message = MessageSchema(
-            subject=f"🎉 Welcome to ShopSync, {name}!",
-            recipients=[email],
-            body=html_content,
-            subtype="html"
-        )
-        
-        await fastmail.send_message(message)
-        print(f"Welcome email sent to {email}")
-    except Exception as e:
-        print(f"Failed to send welcome email to {email}: {str(e)}")
-
-async def send_subscription_confirmation(store_name: str, email: str, plan: str, price: float, start_date: datetime):
-    """Send subscription confirmation email"""
-    try:
-        fastmail = get_mail_config()
-        
-        template = Template(SUBSCRIPTION_CONFIRMATION_TEMPLATE)
-        html_content = template.render(
-            store_name=store_name,
-            plan=plan.title(),
-            price=price,
-            interval="month" if plan == "monthly" else "year",
-            start_date=start_date.strftime("%B %d, %Y"),
-            next_billing=(start_date + timedelta(days=30 if plan == "monthly" else 365)).strftime("%B %d, %Y")
-        )
-        
-        message = MessageSchema(
-            subject=f"🎊 Subscription Confirmed - {store_name}",
-            recipients=[email],
-            body=html_content,
-            subtype="html"
-        )
-        
-        await fastmail.send_message(message)
-        print(f"Subscription confirmation sent to {email}")
-    except Exception as e:
-        print(f"Failed to send subscription confirmation to {email}: {str(e)}")
-
-# Admin Auth endpoints
-@app.post("/api/admin/auth/register", response_model=Token)
-async def register_admin(admin_data: AdminUserCreate, current_admin = Depends(get_current_admin_user)):
-    # Only existing admins can create new admins
-    if admin_users_collection.find_one({"email": admin_data.email}):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
-        )
-    
-    admin_id = str(uuid.uuid4())
-    hashed_password = get_password_hash(admin_data.password)
-    
-    admin_user = {
-        "id": admin_id,
-        "name": admin_data.name,
-        "email": admin_data.email,
-        "password_hash": hashed_password,
-        "created_at": datetime.utcnow()
-    }
-    
-    admin_users_collection.insert_one(admin_user)
-    
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": admin_id, "user_type": "admin"}, expires_delta=access_token_expires
-    )
-    
-    return {"access_token": access_token, "token_type": "bearer", "user_type": "admin"}
-
-@app.post("/api/admin/auth/login", response_model=Token)
-async def login_admin(admin_credentials: AdminUserLogin):
-    admin_user = admin_users_collection.find_one({"email": admin_credentials.email})
-    
-    if not admin_user or not verify_password(admin_credentials.password, admin_user["password_hash"]):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": admin_user["id"], "user_type": "admin"}, expires_delta=access_token_expires
-    )
-    
-    return {"access_token": access_token, "token_type": "bearer", "user_type": "admin"}
-
-@app.get("/api/admin/auth/me", response_model=AdminUser)
-async def get_current_admin_info(current_admin = Depends(get_current_admin_user)):
-    return AdminUser(
-        id=current_admin["id"],
-        name=current_admin["name"],
-        email=current_admin["email"],
-        created_at=current_admin["created_at"]
-    )
-
-# Admin Payment Configuration endpoints
-@app.post("/api/admin/payment/config")
-async def update_payment_config(config: PaymentConfigUpdate, current_admin = Depends(get_current_admin_user)):
-    encrypted_config = {}
-    
-    # Encrypt sensitive data
-    if config.stripe_secret_key:
-        encrypted_config["stripe_secret_key"] = encrypt_data(config.stripe_secret_key)
-    if config.stripe_publishable_key:
-        encrypted_config["stripe_publishable_key"] = encrypt_data(config.stripe_publishable_key)
-    if config.stripe_endpoint_secret:
-        encrypted_config["stripe_endpoint_secret"] = encrypt_data(config.stripe_endpoint_secret)
-    if config.paypal_client_id:
-        encrypted_config["paypal_client_id"] = encrypt_data(config.paypal_client_id)
-    if config.paypal_client_secret:
-        encrypted_config["paypal_client_secret"] = encrypt_data(config.paypal_client_secret)
-    
-    encrypted_config["updated_at"] = datetime.utcnow()
-    encrypted_config["updated_by"] = current_admin["id"]
-    
-    payment_config_collection.replace_one({}, encrypted_config, upsert=True)
-    
-    # Initialize payment providers
-    payment_config = await get_payment_config()
-    if payment_config.get("stripe_secret_key"):
-        stripe.api_key = payment_config["stripe_secret_key"]
-    
-    if payment_config.get("paypal_client_id") and payment_config.get("paypal_client_secret"):
-        paypalrestsdk.configure({
-            "mode": "sandbox",  # Change to "live" for production
-            "client_id": payment_config["paypal_client_id"],
-            "client_secret": payment_config["paypal_client_secret"]
-        })
-    
-    return {"message": "Payment configuration updated successfully"}
-
-@app.get("/api/admin/payment/config")
-async def get_payment_config_status(current_admin = Depends(get_current_admin_user)):
-    config = payment_config_collection.find_one({})
-    if not config:
-        return {"configured": False}
-    
+def product_document(product_id: str, store: dict, product_data: StoreProductCreate, created_at: datetime):
+    unit = validate_product_payload(product_data)
     return {
-        "configured": True,
-        "stripe_configured": bool(config.get("stripe_secret_key")),
-        "paypal_configured": bool(config.get("paypal_client_id")),
-        "updated_at": config.get("updated_at")
+        "id": product_id,
+        "store_id": store["id"],
+        "name": " ".join(product_data.name.strip().split()),
+        "name_key": name_key(product_data.name),
+        "category": product_data.category.strip(),
+        "price": float(product_data.price),
+        "currency": "USD",
+        "description": product_data.description,
+        "is_advertised": product_data.is_advertised,
+        "brand": " ".join(product_data.brand.strip().split()),
+        "package_size": float(product_data.package_size),
+        "package_unit": unit,
+        "provenance": "example",
+        "price_label": EXAMPLE_PRICE_LABEL,
+        "valid_from": as_naive_utc(product_data.valid_from),
+        "valid_until": as_naive_utc(product_data.valid_until),
+        "locality_zip": store.get("zip_code"),
+        "locality_city": store.get("city"),
+        "locality_state": store.get("state"),
+        "created_at": created_at,
+        "updated_at": created_at,
     }
 
-# Admin Dashboard endpoints
-@app.get("/api/admin/stats")
-async def get_admin_stats(current_admin = Depends(get_current_admin_user)):
-    total_stores = store_users_collection.count_documents({})
-    active_subscriptions = store_subscriptions_collection.count_documents({"status": "active"})
-    trial_stores = store_users_collection.count_documents({"subscription_status": "trial"})
-    total_households = users_collection.count_documents({})
-    total_products = store_products_collection.count_documents({"is_advertised": True})
-    
-    # Calculate monthly revenue
-    monthly_revenue = 0
-    yearly_revenue = 0
-    active_subs = list(store_subscriptions_collection.find({"status": "active"}))
-    for sub in active_subs:
-        if sub["plan"] == "monthly":
-            monthly_revenue += 12.00
-        else:  # yearly
-            yearly_revenue += 74.99
-    
-    return {
-        "total_stores": total_stores,
-        "active_subscriptions": active_subscriptions,
-        "trial_stores": trial_stores,
-        "total_households": total_households,
-        "total_products": total_products,
-        "monthly_revenue": monthly_revenue,
-        "yearly_revenue": yearly_revenue,
-        "total_monthly_recurring": monthly_revenue + (yearly_revenue / 12)
+
+def store_can_advertise(store: dict) -> bool:
+    return store.get("subscription_status") in {
+        SubscriptionStatus.ACTIVE.value,
+        SubscriptionStatus.TRIAL.value,
+        SubscriptionStatus.PILOT_UNBILLED.value,
+        SubscriptionStatus.ACTIVE,
+        SubscriptionStatus.TRIAL,
+        SubscriptionStatus.PILOT_UNBILLED,
     }
 
-@app.get("/api/admin/subscriptions")
-async def get_all_subscriptions(current_admin = Depends(get_current_admin_user)):
-    subscriptions = list(store_subscriptions_collection.find({}).sort("created_at", -1))
-    
-    # Convert MongoDB objects to JSON-serializable format and enrich with store info
-    result_subscriptions = []
-    for sub in subscriptions:
-        # Remove MongoDB ObjectId
-        if "_id" in sub:
-            del sub["_id"]
-        
-        # Enrich with store info
-        store = store_users_collection.find_one({"id": sub["store_id"]})
-        if store:
-            sub["store_name"] = store["store_name"]
-            sub["store_email"] = store["email"]
-        
-        result_subscriptions.append(sub)
-    
-    return {"subscriptions": result_subscriptions}
 
-# Stripe Payment endpoints
-@app.post("/api/stripe/create-checkout-session")
-async def create_stripe_checkout_session(plan_type: str, current_store = Depends(get_current_store_user)):
-    payment_config = await get_payment_config()
-    if not payment_config.get("stripe_secret_key"):
-        raise HTTPException(status_code=400, detail="Stripe not configured")
-    
-    stripe.api_key = payment_config["stripe_secret_key"]
-    
-    try:
-        # Plan pricing - UPDATED PRICES
-        plans = {
-            "monthly": {"amount": 1200, "interval": "month"},  # $12.00
-            "yearly": {"amount": 7499, "interval": "year"}     # $74.99
-        }
-        
-        if plan_type not in plans:
-            raise HTTPException(400, "Invalid plan type")
-        
-        # Create customer
-        customer = stripe.Customer.create(
-            email=current_store["email"],
-            metadata={
-                'store_id': current_store["id"],
-                'store_name': current_store["store_name"]
-            }
+def locality_relation(user: dict, city: Optional[str], state: Optional[str], zip_code: Optional[str]) -> str:
+    home_zip = (user.get("home_zip") or "").strip()
+    home_city = (user.get("home_city") or "").strip().lower()
+    home_state = (user.get("home_state") or "").strip().lower()
+    if not home_zip and not home_city:
+        return "household_location_unset"
+    if home_zip and zip_code and home_zip == zip_code.strip():
+        return "same_zip"
+    if (
+        home_city
+        and home_state
+        and city
+        and state
+        and home_city == city.strip().lower()
+        and home_state == state.strip().lower()
+    ):
+        return "same_city"
+    return "other_area"
+
+
+def validity_note(product: dict, now: datetime) -> str:
+    start = product.get("valid_from")
+    end = product.get("valid_until")
+    if start or end:
+        start_text = start.isoformat() + "Z" if start else "open start"
+        end_text = end.isoformat() + "Z" if end else "open end"
+        return (
+            f"Example price window {start_text} to {end_text}. "
+            "This is not a live shelf price."
         )
-        
-        # Create checkout session
-        session = stripe.checkout.Session.create(
-            customer=customer.id,
-            payment_method_types=['card'],
-            line_items=[{
-                'price_data': {
-                    'currency': 'usd',
-                    'unit_amount': plans[plan_type]["amount"],
-                    'recurring': {'interval': plans[plan_type]["interval"]},
-                    'product_data': {
-                        'name': f'ShopSync Store Subscription - {plan_type.title()}',
-                        'description': f'{plan_type.title()} subscription for store advertising'
-                    }
-                },
-                'quantity': 1
-            }],
-            mode='subscription',
-            success_url=f"{os.getenv('REACT_APP_BACKEND_URL', 'http://localhost:3000')}/store/subscription/success?session_id={{CHECKOUT_SESSION_ID}}",
-            cancel_url=f"{os.getenv('REACT_APP_BACKEND_URL', 'http://localhost:3000')}/store/subscription/cancel",
-            subscription_data={
-                'metadata': {
-                    'store_id': current_store["id"],
-                    'plan_type': plan_type
-                }
-            }
-        )
-        
-        return {"session_url": session.url, "session_id": session.id}
-    except stripe.error.StripeError as e:
-        raise HTTPException(500, f"Stripe error: {str(e)}")
-    except Exception as e:
-        raise HTTPException(500, f"Error creating checkout session: {str(e)}")
+    return "No validity window was entered. This is an example price, not a live shelf price."
 
-@app.post("/api/stripe/webhook")
-async def stripe_webhook(request: Request, stripe_signature: str = Header(None)):
-    payment_config = await get_payment_config()
-    endpoint_secret = payment_config.get("stripe_endpoint_secret")
-    
-    if not endpoint_secret:
-        raise HTTPException(400, "Stripe webhook secret not configured")
-    
-    payload = await request.body()
-    
-    try:
-        event = stripe.Webhook.construct_event(
-            payload, stripe_signature, endpoint_secret
-        )
-    except ValueError:
-        raise HTTPException(400, "Invalid payload")
-    except stripe.error.SignatureVerificationError:
-        raise HTTPException(401, "Invalid signature")
-    
-    # Handle subscription events
-    if event.type == 'checkout.session.completed':
-        await handle_checkout_completed(event.data.object)
-    elif event.type == 'invoice.payment_succeeded':
-        await handle_payment_succeeded(event.data.object)
-    elif event.type == 'invoice.payment_failed':
-        await handle_payment_failed(event.data.object)
-    elif event.type == 'customer.subscription.deleted':
-        await handle_subscription_canceled(event.data.object)
-    
-    return {"status": "success"}
 
-async def handle_checkout_completed(session):
-    store_id = session.metadata.get('store_id')
-    plan_type = session.metadata.get('plan_type')
-    subscription_id = session.subscription
-    
-    if not store_id or not plan_type:
-        return
-    
-    # Get store info for email
-    store = store_users_collection.find_one({"id": store_id})
-    if not store:
-        return
-    
-    # Create subscription record
-    subscription_doc_id = str(uuid.uuid4())
-    start_date = datetime.utcnow()
-    
-    if plan_type == "monthly":
-        end_date = start_date + timedelta(days=30)
-        monthly_price = 12.00
-        price_display = 12.00
-    else:  # yearly
-        end_date = start_date + timedelta(days=365)
-        monthly_price = 6.25  # 74.99 / 12 months
-        price_display = 74.99
-    
-    subscription = {
-        "id": subscription_doc_id,
-        "store_id": store_id,
-        "plan": plan_type,
-        "status": SubscriptionStatus.ACTIVE,
-        "provider": PaymentProvider.STRIPE,
-        "subscription_id": subscription_id,
-        "start_date": start_date,
-        "end_date": end_date,
-        "monthly_price": monthly_price,
-        "created_at": datetime.utcnow()
-    }
-    
-    store_subscriptions_collection.insert_one(subscription)
-    
-    # Update store subscription status
-    store_users_collection.update_one(
-        {"id": store_id},
-        {
-            "$set": {
-                "subscription_status": SubscriptionStatus.ACTIVE,
-                "subscription_plan": plan_type,
-                "subscription_expires": end_date
-            }
-        }
+def compare_item_and_product(item: dict, product: dict) -> List[str]:
+    reasons = []
+    item_brand = name_key(item["brand"]) if item.get("brand") else None
+    product_brand = name_key(product["brand"]) if product.get("brand") else None
+    if not item_brand or not product_brand:
+        reasons.append("brand missing")
+    elif item_brand != product_brand:
+        reasons.append("brand differs")
+
+    if item.get("package_size") is None or product.get("package_size") is None:
+        reasons.append("package size missing")
+    else:
+        try:
+            if abs(float(item["package_size"]) - float(product["package_size"])) > 1e-6:
+                reasons.append("package size differs")
+        except (TypeError, ValueError):
+            reasons.append("package size is not numeric")
+
+    item_unit = canonical_unit_or_none(item.get("package_unit"))
+    product_unit = canonical_unit_or_none(product.get("package_unit"))
+    if item.get("package_unit") and not item_unit:
+        reasons.append("item package unit is unrecognized")
+    elif product.get("package_unit") and not product_unit:
+        reasons.append("retailer package unit is unrecognized")
+    elif not item_unit or not product_unit:
+        reasons.append("package unit missing")
+    elif item_unit != product_unit:
+        reasons.append("package unit differs")
+    return reasons
+
+
+def price_is_current(product: dict, now: datetime) -> bool:
+    start = product.get("valid_from")
+    end = product.get("valid_until")
+    if start and start > now:
+        return False
+    if end and end < now:
+        return False
+    provenance = product.get("provenance") or "example"
+    return provenance == "example"
+
+
+def example_prices_for_item(item: dict, user: dict) -> List[ExamplePrice]:
+    key = item.get("name_key") or name_key(item.get("name", ""))
+    products = list(
+        store_products_collection.find({"name_key": key, "is_advertised": True})
     )
-    
-    # Send subscription confirmation email
-    asyncio.create_task(send_subscription_confirmation(
-        store["store_name"], 
-        store["email"], 
-        plan_type, 
-        price_display, 
-        start_date
-    ))
-
-async def handle_payment_succeeded(invoice):
-    subscription_id = invoice.subscription
-    
-    # Update subscription status
-    store_subscriptions_collection.update_one(
-        {"subscription_id": subscription_id},
-        {
-            "$set": {
-                "status": SubscriptionStatus.ACTIVE,
-                "last_payment_date": datetime.utcnow()
-            }
-        }
-    )
-
-async def handle_payment_failed(invoice):
-    subscription_id = invoice.subscription
-    
-    # Update subscription status
-    store_subscriptions_collection.update_one(
-        {"subscription_id": subscription_id},
-        {
-            "$set": {
-                "status": SubscriptionStatus.PAST_DUE
-            }
-        }
-    )
-
-async def handle_subscription_canceled(subscription):
-    subscription_id = subscription.id
-    
-    # Update subscription status
-    result = store_subscriptions_collection.update_one(
-        {"subscription_id": subscription_id},
-        {
-            "$set": {
-                "status": SubscriptionStatus.CANCELED
-            }
-        }
-    )
-    
-    if result.modified_count > 0:
-        # Update store status
-        sub = store_subscriptions_collection.find_one({"subscription_id": subscription_id})
-        if sub:
-            store_users_collection.update_one(
-                {"id": sub["store_id"]},
-                {
-                    "$set": {
-                        "subscription_status": SubscriptionStatus.INACTIVE
-                    }
-                }
+    now = datetime.utcnow()
+    results = []
+    for product in products:
+        if not price_is_current(product, now):
+            continue
+        store = store_users_collection.find_one({"id": product["store_id"]})
+        if not store or not store_can_advertise(store):
+            continue
+        reasons = compare_item_and_product(item, product)
+        city = product.get("locality_city") or store.get("city")
+        state = product.get("locality_state") or store.get("state")
+        zip_code = product.get("locality_zip") or store.get("zip_code")
+        results.append(
+            ExamplePrice(
+                product_id=product["id"],
+                store_id=store["id"],
+                store_name=store["store_name"],
+                store_address=store.get("address", ""),
+                locality_city=city,
+                locality_state=state,
+                locality_zip=zip_code,
+                locality_relation=locality_relation(user, city, state, zip_code),
+                name=product["name"],
+                brand=product.get("brand"),
+                package_size=product.get("package_size"),
+                package_unit=product.get("package_unit"),
+                price=product["price"],
+                currency=product.get("currency") or "USD",
+                provenance="example",
+                comparable=len(reasons) == 0,
+                comparability_reasons=reasons,
+                valid_from=product.get("valid_from"),
+                valid_until=product.get("valid_until"),
+                validity_note=validity_note(product, now),
             )
+        )
+    results.sort(key=lambda row: (not row.comparable, row.price))
+    return results
 
-# Household Auth endpoints (existing, updated to include user_type in token)
+
+def disabled_admin():
+    raise HTTPException(status_code=404, detail="Admin console is disabled for this pilot.")
+
+
+def disabled_billing():
+    raise HTTPException(status_code=501, detail=PILOT_BILLING_DETAIL)
+
+
+@app.api_route("/api/admin/auth/register", methods=["GET", "POST"])
+@app.api_route("/api/admin/auth/login", methods=["GET", "POST"])
+@app.api_route("/api/admin/auth/me", methods=["GET", "POST"])
+@app.api_route("/api/admin/payment/config", methods=["GET", "POST"])
+@app.api_route("/api/admin/stats", methods=["GET"])
+@app.api_route("/api/admin/subscriptions", methods=["GET"])
+async def admin_disabled():
+    disabled_admin()
+
+
+@app.api_route("/api/stripe/create-checkout-session", methods=["GET", "POST"])
+@app.api_route("/api/stripe/webhook", methods=["POST"])
+async def billing_routes_disabled():
+    disabled_billing()
+
+
+@app.get("/api/health")
+async def health_check():
+    client.admin.command("ping")
+    return {
+        "status": "ok",
+        "database": DB_NAME,
+        "pilot": True,
+        "billing_implemented": False,
+        "admin_console": False,
+        "outgoing_email": smtp_configured(),
+    }
+
+
+@app.get("/api/pilot")
+async def pilot_info():
+    return {
+        "name": "ListSync",
+        "stage": "household-pilot",
+        "consumer_fee": None,
+        "retailer_monthly_fee": None,
+        "retailer_yearly_fee": None,
+        "billing_implemented": False,
+        "whole_basket_offer_implemented": False,
+        "live_retailer_prices": False,
+        "household_lists_private": True,
+        "package_units": ALLOWED_UNITS,
+    }
+
+
 @app.post("/api/auth/register", response_model=Token)
 async def register(user_data: UserCreate):
-    # Check if user already exists
-    if users_collection.find_one({"email": user_data.email}):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
-        )
-    
-    # Create new user
+    email = user_data.email.lower()
+    if users_collection.find_one({"email": email}):
+        raise HTTPException(status_code=400, detail="Email already registered")
+    if not user_data.name.strip():
+        raise HTTPException(status_code=400, detail="Name is required.")
+
     user_id = str(uuid.uuid4())
-    hashed_password = get_password_hash(user_data.password)
-    
     user = {
         "id": user_id,
-        "name": user_data.name,
-        "email": user_data.email,
-        "password_hash": hashed_password,
-        "created_at": datetime.utcnow()
+        "name": user_data.name.strip(),
+        "email": email,
+        "password_hash": get_password_hash(user_data.password),
+        "home_zip": None,
+        "home_city": None,
+        "home_state": None,
+        "token_version": 0,
+        "created_at": datetime.utcnow(),
     }
-    
-    users_collection.insert_one(user)
-    
-    # Send welcome email (async)
-    asyncio.create_task(send_welcome_email(user_data.name, user_data.email, "household"))
-    
-    # Create access token
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": user_id, "user_type": "household"}, expires_delta=access_token_expires
-    )
-    
+    try:
+        users_collection.insert_one(user)
+    except DuplicateKeyError:
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    access_token = household_token(user_id, 0)
     return {"access_token": access_token, "token_type": "bearer", "user_type": "household"}
+
 
 @app.post("/api/auth/login", response_model=Token)
 async def login(user_credentials: UserLogin):
-    user = users_collection.find_one({"email": user_credentials.email})
-    
+    user = users_collection.find_one({"email": user_credentials.email.lower()})
     if not user or not verify_password(user_credentials.password, user["password_hash"]):
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=401,
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": user["id"], "user_type": "household"}, expires_delta=access_token_expires
-    )
-    
+    access_token = household_token(user["id"], int(user.get("token_version") or 0))
     return {"access_token": access_token, "token_type": "bearer", "user_type": "household"}
 
+
 @app.get("/api/auth/me", response_model=User)
-async def get_current_user_info(current_user = Depends(get_current_user)):
-    if current_user.get("user_type") != "household":
-        raise HTTPException(status_code=403, detail="Household user required")
-    
-    return User(
-        id=current_user["id"],
-        name=current_user["name"],
-        email=current_user["email"],
-        created_at=current_user["created_at"]
+async def get_current_user_info(current_user=Depends(get_current_user)):
+    require_household(current_user)
+    return User(**current_user)
+
+
+@app.patch("/api/auth/me", response_model=User)
+async def update_current_user_info(
+    profile: HouseholdProfileUpdate, current_user=Depends(get_current_user)
+):
+    require_household(current_user)
+    updates = {}
+    fields = profile.model_fields_set
+    if "home_zip" in fields:
+        updates["home_zip"] = normalize_zip(profile.home_zip)
+    if "home_city" in fields:
+        city = (profile.home_city or "").strip()
+        updates["home_city"] = city or None
+    if "home_state" in fields:
+        updates["home_state"] = normalize_state(profile.home_state)
+    if updates:
+        users_collection.update_one({"id": current_user["id"]}, {"$set": updates})
+    refreshed = users_collection.find_one({"id": current_user["id"]})
+    refreshed = without_mongo_id(refreshed)
+    refreshed["user_type"] = "household"
+    return User(**refreshed)
+
+
+@app.get("/api/events")
+async def household_events(current_user=Depends(get_current_user)):
+    require_household(current_user)
+    queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+    user_id = current_user["id"]
+    _listeners.setdefault(user_id, set()).add(queue)
+
+    async def stream():
+        try:
+            hello = {"type": "ready", "user_id": user_id}
+            yield f"data: {json.dumps(hello)}\n\n"
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=15)
+                    yield f"data: {json.dumps(event, default=str)}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            listeners = _listeners.get(user_id, set())
+            listeners.discard(queue)
+            if not listeners and user_id in _listeners:
+                _listeners.pop(user_id, None)
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
 
-# Store Auth endpoints (updated with new pricing)
+
 @app.post("/api/store/auth/register", response_model=Token)
 async def register_store(store_data: StoreUserCreate):
-    # Check if store already exists
-    if store_users_collection.find_one({"email": store_data.email}):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
-        )
-    
-    # Create new store user
+    email = store_data.email.lower()
+    if store_users_collection.find_one({"email": email}):
+        raise HTTPException(status_code=400, detail="Email already registered")
     store_id = str(uuid.uuid4())
-    hashed_password = get_password_hash(store_data.password)
-    
     store_user = {
         "id": store_id,
-        "store_name": store_data.store_name,
-        "email": store_data.email,
-        "password_hash": hashed_password,
-        "address": store_data.address,
-        "city": store_data.city,
-        "state": store_data.state,
-        "zip_code": store_data.zip_code,
+        "store_name": store_data.store_name.strip(),
+        "email": email,
+        "password_hash": get_password_hash(store_data.password),
+        "address": store_data.address.strip(),
+        "city": store_data.city.strip(),
+        "state": normalize_state(store_data.state),
+        "zip_code": normalize_zip(store_data.zip_code),
         "phone": store_data.phone,
-        "subscription_status": SubscriptionStatus.TRIAL,
+        "subscription_status": SubscriptionStatus.PILOT_UNBILLED.value,
         "subscription_plan": None,
-        "subscription_expires": datetime.utcnow() + timedelta(days=7),  # 7-day trial
-        "created_at": datetime.utcnow()
+        "subscription_expires": None,
+        "created_at": datetime.utcnow(),
     }
-    
-    store_users_collection.insert_one(store_user)
-    
-    # Send welcome email (async)
-    asyncio.create_task(send_welcome_email(store_data.store_name, store_data.email, "store"))
-    
-    # Create access token
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    try:
+        store_users_collection.insert_one(store_user)
+    except DuplicateKeyError:
+        raise HTTPException(status_code=400, detail="Email already registered")
+
     access_token = create_access_token(
-        data={"sub": store_id, "user_type": "store"}, expires_delta=access_token_expires
+        data={"sub": store_id, "user_type": "store"},
+        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
     )
-    
     return {"access_token": access_token, "token_type": "bearer", "user_type": "store"}
+
 
 @app.post("/api/store/auth/login", response_model=Token)
 async def login_store(store_credentials: StoreUserLogin):
-    store_user = store_users_collection.find_one({"email": store_credentials.email})
-    
+    store_user = store_users_collection.find_one({"email": store_credentials.email.lower()})
     if not store_user or not verify_password(store_credentials.password, store_user["password_hash"]):
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=401,
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": store_user["id"], "user_type": "store"}, expires_delta=access_token_expires
+        data={"sub": store_user["id"], "user_type": "store"},
+        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
     )
-    
     return {"access_token": access_token, "token_type": "bearer", "user_type": "store"}
 
+
 @app.get("/api/store/auth/me", response_model=StoreUser)
-async def get_current_store_info(current_store = Depends(get_current_store_user)):
-    return StoreUser(
-        id=current_store["id"],
-        store_name=current_store["store_name"],
-        email=current_store["email"],
-        address=current_store["address"],
-        city=current_store["city"],
-        state=current_store["state"],
-        zip_code=current_store["zip_code"],
-        phone=current_store["phone"],
-        subscription_status=current_store["subscription_status"],
-        subscription_plan=current_store.get("subscription_plan"),
-        subscription_expires=current_store.get("subscription_expires"),
-        created_at=current_store["created_at"]
-    )
+async def get_current_store_info(current_store=Depends(get_current_store_user)):
+    return StoreUser(**current_store)
 
-# Store Subscription endpoints (updated pricing)
-@app.post("/api/store/subscription", response_model=StoreSubscription)
-async def create_subscription(subscription_data: StoreSubscriptionCreate, current_store = Depends(get_current_store_user)):
-    # Check if store already has an active subscription
-    existing_sub = store_subscriptions_collection.find_one({
-        "store_id": current_store["id"],
-        "status": SubscriptionStatus.ACTIVE
-    })
-    
-    if existing_sub:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Store already has an active subscription"
-        )
-    
-    # For now, create a pending subscription that will be activated via payment
-    subscription_id = str(uuid.uuid4())
-    start_date = datetime.utcnow()
-    
-    # UPDATED PRICING
-    if subscription_data.plan == SubscriptionPlan.MONTHLY:
-        end_date = start_date + timedelta(days=30)
-        monthly_price = 12.00
-    else:  # yearly
-        end_date = start_date + timedelta(days=365)
-        monthly_price = 6.25  # 74.99 / 12 months
-    
-    subscription = {
-        "id": subscription_id,
-        "store_id": current_store["id"],
-        "plan": subscription_data.plan,
-        "status": SubscriptionStatus.INACTIVE,  # Will be activated via payment
-        "provider": subscription_data.provider,
-        "subscription_id": None,  # Set when payment is processed
-        "start_date": start_date,
-        "end_date": end_date,
-        "monthly_price": monthly_price,
-        "created_at": datetime.utcnow()
+
+@app.post("/api/store/subscription")
+async def create_subscription(current_store=Depends(get_current_store_user)):
+    disabled_billing()
+
+
+@app.get("/api/store/subscription")
+async def get_current_subscription(current_store=Depends(get_current_store_user)):
+    return {
+        "billing_implemented": False,
+        "status": current_store.get("subscription_status"),
+        "plan": None,
+        "monthly_fee": None,
+        "yearly_fee": None,
+        "fee_amount": None,
+        "currency": None,
+        "plan_options": [SubscriptionPlan.MONTHLY.value, SubscriptionPlan.YEARLY.value],
+        "message": PILOT_BILLING_DETAIL,
     }
-    
-    store_subscriptions_collection.insert_one(subscription)
-    
-    return StoreSubscription(**subscription)
 
-@app.get("/api/store/subscription", response_model=Optional[StoreSubscription])
-async def get_current_subscription(current_store = Depends(get_current_store_user)):
-    subscription = store_subscriptions_collection.find_one({
-        "store_id": current_store["id"],
-        "status": {"$in": [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIAL]}
-    })
-    
-    if not subscription:
-        return None
-    
-    return StoreSubscription(**subscription)
 
-# Store Product endpoints (unchanged)
 @app.post("/api/store/products", response_model=StoreProduct)
-async def add_product(product_data: StoreProductCreate, current_store = Depends(get_current_store_user)):
-    # Check if store has active subscription
-    if current_store["subscription_status"] not in [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIAL]:
+async def add_product(product_data: StoreProductCreate, current_store=Depends(get_current_store_user)):
+    if not store_can_advertise(current_store):
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Active subscription required to add products"
+            status_code=403,
+            detail="This retailer account cannot publish example prices.",
         )
-    
     product_id = str(uuid.uuid4())
-    
-    product = {
-        "id": product_id,
-        "store_id": current_store["id"],
-        "name": product_data.name,
-        "category": product_data.category,
-        "price": product_data.price,
-        "description": product_data.description,
-        "is_advertised": product_data.is_advertised,
-        "created_at": datetime.utcnow()
-    }
-    
+    product = product_document(product_id, current_store, product_data, datetime.utcnow())
     store_products_collection.insert_one(product)
-    
     return StoreProduct(**product)
 
+
 @app.get("/api/store/products", response_model=List[StoreProduct])
-async def get_store_products(current_store = Depends(get_current_store_user)):
-    products = list(store_products_collection.find({"store_id": current_store["id"]}).sort("created_at", -1))
-    
-    return [StoreProduct(**product) for product in products]
+async def get_store_products(current_store=Depends(get_current_store_user)):
+    products = list(
+        store_products_collection.find({"store_id": current_store["id"]}).sort("created_at", -1)
+    )
+    return [StoreProduct(**without_mongo_id(product)) for product in products]
+
 
 @app.put("/api/store/products/{product_id}", response_model=StoreProduct)
-async def update_product(product_id: str, product_data: StoreProductCreate, current_store = Depends(get_current_store_user)):
-    product = store_products_collection.find_one({"id": product_id, "store_id": current_store["id"]})
-    
-    if not product:
+async def update_product(
+    product_id: str, product_data: StoreProductCreate, current_store=Depends(get_current_store_user)
+):
+    existing = store_products_collection.find_one({"id": product_id, "store_id": current_store["id"]})
+    if not existing:
         raise HTTPException(status_code=404, detail="Product not found")
-    
-    # Update product
-    store_products_collection.update_one(
-        {"id": product_id},
-        {
-            "$set": {
-                "name": product_data.name,
-                "category": product_data.category,
-                "price": product_data.price,
-                "description": product_data.description,
-                "is_advertised": product_data.is_advertised
-            }
-        }
-    )
-    
-    updated_product = store_products_collection.find_one({"id": product_id})
-    return StoreProduct(**updated_product)
+    updated = product_document(product_id, current_store, product_data, existing["created_at"])
+    updated["updated_at"] = datetime.utcnow()
+    store_products_collection.replace_one({"id": product_id}, updated)
+    return StoreProduct(**updated)
+
 
 @app.delete("/api/store/products/{product_id}")
-async def delete_product(product_id: str, current_store = Depends(get_current_store_user)):
+async def delete_product(product_id: str, current_store=Depends(get_current_store_user)):
     product = store_products_collection.find_one({"id": product_id, "store_id": current_store["id"]})
-    
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
-    
     store_products_collection.delete_one({"id": product_id})
-    
     return {"message": "Product deleted successfully"}
 
-# Public Product Search endpoints (for household users)
-@app.get("/api/products/search", response_model=List[ProductSearchResult])
-async def search_products(
-    query: str,
-    zip_code: Optional[str] = None,
-    max_distance: Optional[int] = 25,  # miles
-    limit: int = 50
-):
-    # Search for products by name (case-insensitive)
-    products = list(store_products_collection.find({
-        "name": {"$regex": query, "$options": "i"},
-        "is_advertised": True
-    }).limit(limit))
-    
+
+@app.get("/api/products/search")
+async def search_products(query: str, limit: int = 20, current_user=Depends(get_current_user)):
+    """Legacy name search. Requires a household login and never returns household lists."""
+    require_household(current_user)
+    key = name_key(query)
+    if not key:
+        return []
+    products = list(
+        store_products_collection.find({"name_key": key, "is_advertised": True}).limit(min(limit, 50))
+    )
+    now = datetime.utcnow()
     results = []
     for product in products:
-        # Get store info
+        if not price_is_current(product, now):
+            continue
         store = store_users_collection.find_one({"id": product["store_id"]})
-        if store and store["subscription_status"] in [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIAL]:
-            # TODO: Add distance calculation based on zip_code
-            distance = None  # Placeholder for now
-            
-            results.append(ProductSearchResult(
-                product=StoreProduct(**product),
-                store=StoreUser(**store),
-                distance=distance
-            ))
-    
+        if not store or not store_can_advertise(store):
+            continue
+        public_store = StorePublic(
+            id=store["id"],
+            store_name=store["store_name"],
+            address=store.get("address", ""),
+            city=store.get("city", ""),
+            state=store.get("state", ""),
+            zip_code=store.get("zip_code", ""),
+        )
+        results.append(
+            {
+                "product": StoreProduct(**without_mongo_id(product)).model_dump(mode="json"),
+                "store": public_store.model_dump(mode="json"),
+                "distance": None,
+                "price_label": EXAMPLE_PRICE_LABEL,
+                "provenance": "example",
+                "availability": None,
+                "availability_note": AVAILABILITY_NOTE,
+                "note": "Exact name match only. Comparability requires brand, package size, and unit. Use the item price endpoint for that check.",
+            }
+        )
     return results
 
-@app.get("/api/products/categories")
-async def get_product_categories():
-    # Get unique categories from all advertised products
-    pipeline = [
-        {"$match": {"is_advertised": True}},
-        {"$group": {"_id": "$category"}},
-        {"$sort": {"_id": 1}}
-    ]
-    
-    categories = list(store_products_collection.aggregate(pipeline))
-    return [cat["_id"] for cat in categories if cat["_id"]]
 
-# Store Discovery endpoints
-@app.get("/api/stores/local")
+@app.get("/api/stores/local", response_model=List[StorePublic])
 async def get_local_stores(
     zip_code: Optional[str] = None,
     city: Optional[str] = None,
     state: Optional[str] = None,
-    limit: int = 20
+    limit: int = 20,
+    current_user=Depends(get_current_user),
 ):
-    query = {"subscription_status": {"$in": [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIAL]}}
-    
+    require_household(current_user)
+    query = {
+        "subscription_status": {
+            "$in": [
+                SubscriptionStatus.ACTIVE.value,
+                SubscriptionStatus.TRIAL.value,
+                SubscriptionStatus.PILOT_UNBILLED.value,
+            ]
+        }
+    }
     if zip_code:
-        query["zip_code"] = zip_code
+        query["zip_code"] = zip_code.strip()
     elif city and state:
-        query["city"] = {"$regex": city, "$options": "i"}
-        query["state"] = {"$regex": state, "$options": "i"}
-    
-    stores = list(store_users_collection.find(query).limit(limit))
-    
-    return [StoreUser(**store) for store in stores]
+        query["city"] = city.strip()
+        query["state"] = normalize_state(state)
+    stores = list(store_users_collection.find(query).limit(min(limit, 50)))
+    return [
+        StorePublic(
+            id=store["id"],
+            store_name=store["store_name"],
+            address=store.get("address", ""),
+            city=store.get("city", ""),
+            state=store.get("state", ""),
+            zip_code=store.get("zip_code", ""),
+        )
+        for store in stores
+    ]
 
-# Existing household shopping list endpoints (unchanged)
+
 @app.post("/api/lists", response_model=ShoppingList)
-async def create_shopping_list(list_data: ShoppingListCreate, current_user = Depends(get_current_user)):
-    if current_user.get("user_type") != "household":
-        raise HTTPException(status_code=403, detail="Household user required")
-    
+async def create_shopping_list(list_data: ShoppingListCreate, current_user=Depends(get_current_user)):
+    require_household(current_user)
+    if not list_data.name.strip():
+        raise HTTPException(status_code=400, detail="List name is required.")
     list_id = str(uuid.uuid4())
-    
     shopping_list = {
         "id": list_id,
-        "name": list_data.name,
+        "name": list_data.name.strip(),
         "created_by": current_user["id"],
         "shared_with": [],
-        "created_at": datetime.utcnow()
+        "created_at": datetime.utcnow(),
     }
-    
     lists_collection.insert_one(shopping_list)
-    
-    return ShoppingList(**shopping_list)
+    publish([current_user["id"]], {"type": "lists.changed", "list_id": list_id, "action": "created"})
+    return ShoppingList(**without_mongo_id(shopping_list))
+
 
 @app.get("/api/lists", response_model=List[ShoppingList])
-async def get_user_lists(current_user = Depends(get_current_user)):
-    if current_user.get("user_type") != "household":
-        raise HTTPException(status_code=403, detail="Household user required")
-    
-    # Get lists created by user or shared with user
-    lists = list(lists_collection.find({
-        "$or": [
-            {"created_by": current_user["id"]},
-            {"shared_with": current_user["id"]}
-        ]
-    }).sort("created_at", -1))
-    
-    return [ShoppingList(**lst) for lst in lists]
+async def get_user_lists(current_user=Depends(get_current_user)):
+    require_household(current_user)
+    lists = list(
+        lists_collection.find(
+            {"$or": [{"created_by": current_user["id"]}, {"shared_with": current_user["id"]}]}
+        ).sort("created_at", -1)
+    )
+    return [ShoppingList(**without_mongo_id(row)) for row in lists]
+
 
 @app.get("/api/lists/{list_id}", response_model=ShoppingList)
-async def get_shopping_list(list_id: str, current_user = Depends(get_current_user)):
-    if current_user.get("user_type") != "household":
-        raise HTTPException(status_code=403, detail="Household user required")
-    
-    shopping_list = lists_collection.find_one({"id": list_id})
-    
-    if not shopping_list:
-        raise HTTPException(status_code=404, detail="Shopping list not found")
-    
-    # Check if user has access to this list
-    if (shopping_list["created_by"] != current_user["id"] and 
-        current_user["id"] not in shopping_list["shared_with"]):
-        raise HTTPException(status_code=403, detail="Access denied")
-    
-    return ShoppingList(**shopping_list)
+async def get_shopping_list(list_id: str, current_user=Depends(get_current_user)):
+    shopping_list = load_list_for_member(list_id, current_user)
+    return ShoppingList(**without_mongo_id(shopping_list))
+
+
+@app.get("/api/lists/{list_id}/members")
+async def get_list_members(list_id: str, current_user=Depends(get_current_user)):
+    shopping_list = load_list_for_member(list_id, current_user)
+    people = []
+    for user_id in member_ids(shopping_list):
+        user = users_collection.find_one({"id": user_id})
+        if not user:
+            continue
+        people.append(
+            {
+                "id": user_id,
+                "name": user["name"],
+                "email": user["email"],
+                "role": "owner" if user_id == shopping_list["created_by"] else "member",
+            }
+        )
+    return people
+
 
 @app.post("/api/lists/{list_id}/share")
-async def share_list(list_id: str, share_request: ShareListRequest, current_user = Depends(get_current_user)):
-    if current_user.get("user_type") != "household":
-        raise HTTPException(status_code=403, detail="Household user required")
-    
-    shopping_list = lists_collection.find_one({"id": list_id})
-    
-    if not shopping_list:
-        raise HTTPException(status_code=404, detail="Shopping list not found")
-    
-    # Check if user owns this list
-    if shopping_list["created_by"] != current_user["id"]:
-        raise HTTPException(status_code=403, detail="Only list owner can share")
-    
-    # Find user to share with
-    target_user = users_collection.find_one({"email": share_request.email})
+async def share_list(list_id: str, share_request: ShareListRequest, current_user=Depends(get_current_user)):
+    shopping_list = load_list_for_owner(list_id, current_user)
+    target_user = users_collection.find_one({"email": share_request.email.lower()})
     if not target_user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    # Add user to shared_with list if not already there
-    if target_user["id"] not in shopping_list["shared_with"]:
-        lists_collection.update_one(
-            {"id": list_id},
-            {"$push": {"shared_with": target_user["id"]}}
+        raise HTTPException(
+            status_code=404,
+            detail="No household account uses that email yet. They need to register before the list can be shared.",
         )
-    
+    if target_user["id"] == current_user["id"]:
+        raise HTTPException(status_code=400, detail="You already own this list.")
+    if target_user["id"] not in shopping_list.get("shared_with", []):
+        lists_collection.update_one({"id": list_id}, {"$push": {"shared_with": target_user["id"]}})
+    listeners = list(dict.fromkeys(member_ids(shopping_list) + [target_user["id"]]))
+    publish(listeners, {"type": "lists.changed", "list_id": list_id, "action": "shared"})
     return {"message": "List shared successfully"}
 
-@app.delete("/api/lists/{list_id}")
-async def delete_shopping_list(list_id: str, current_user = Depends(get_current_user)):
+
+def invite_is_open(invite: Optional[dict], now: Optional[datetime] = None) -> bool:
+    if not invite:
+        return False
+    now = now or datetime.utcnow()
+    if invite.get("used_at") or invite.get("revoked_at"):
+        return False
+    expires_at = invite.get("expires_at")
+    return bool(expires_at and expires_at > now)
+
+
+def add_member(shopping_list: dict, user_id: str):
+    if user_id == shopping_list["created_by"]:
+        return
+    if user_id not in (shopping_list.get("shared_with") or []):
+        lists_collection.update_one({"id": shopping_list["id"]}, {"$addToSet": {"shared_with": user_id}})
+        shopping_list.setdefault("shared_with", []).append(user_id)
+
+
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str
+    password: str
+
+
+def recent_reset_count(user_id: str) -> int:
+    since = datetime.utcnow() - timedelta(hours=RESET_HOURS)
+    return password_resets_collection.count_documents({"user_id": user_id, "created_at": {"$gte": since}})
+
+
+def ip_is_limited(ip: str) -> bool:
+    now = datetime.utcnow()
+    window_start = now - timedelta(hours=RESET_HOURS)
+    hits = [stamp for stamp in _reset_ip_hits.get(ip, []) if stamp >= window_start]
+    if len(hits) >= RESET_IP_LIMIT:
+        _reset_ip_hits[ip] = hits
+        return True
+    hits.append(now)
+    _reset_ip_hits[ip] = hits
+    return False
+
+
+def issue_password_reset(email: str, reveal: bool = False):
+    """Create a one-time reset. reveal=True is only for the operator CLI."""
+    user = users_collection.find_one({"email": email.lower()})
+    if not user:
+        return None
+    if recent_reset_count(user["id"]) >= RESET_ACCOUNT_LIMIT:
+        return "limited" if reveal else None
+    raw = new_secret_token()
+    password_resets_collection.insert_one(
+        {
+            "id": str(uuid.uuid4()),
+            "user_id": user["id"],
+            "token_hash": hash_token(raw),
+            "expires_at": datetime.utcnow() + timedelta(hours=RESET_HOURS),
+            "used_at": None,
+            "created_at": datetime.utcnow(),
+        }
+    )
+    link = f"{public_origin()}/reset/{raw}"
+    if reveal:
+        return link
+    try:
+        send_reset_email(user["email"], link)
+    except Exception:
+        # The HTTP caller still gets the generic response. The link is not logged.
+        pass
+    return True
+
+
+def apply_new_password(user: dict, new_password: str) -> str:
+    version = int(user.get("token_version") or 0) + 1
+    users_collection.update_one(
+        {"id": user["id"]},
+        {"$set": {"password_hash": get_password_hash(new_password), "token_version": version}},
+    )
+    return household_token(user["id"], version)
+
+
+@app.post("/api/auth/forgot-password")
+async def forgot_password(body: PasswordResetRequest, request: Request):
+    ip = request.client.host if request.client else "unknown"
+    if not ip_is_limited(ip):
+        issue_password_reset(str(body.email), reveal=False)
+    return {"message": FORGOT_MESSAGE}
+
+
+@app.post("/api/auth/reset-password", response_model=Token)
+async def reset_password(body: PasswordResetConfirm):
+    digest = hash_token(body.token)
+    reset = password_resets_collection.find_one_and_update(
+        {"token_hash": digest, "used_at": None, "expires_at": {"$gt": datetime.utcnow()}},
+        {"$set": {"used_at": datetime.utcnow()}},
+    )
+    if not reset:
+        raise HTTPException(status_code=400, detail=RESET_UNUSABLE)
+    user = users_collection.find_one({"id": reset["user_id"]})
+    if not user:
+        raise HTTPException(status_code=400, detail=RESET_UNUSABLE)
+    access_token = apply_new_password(user, body.password)
+    return {"access_token": access_token, "token_type": "bearer", "user_type": "household"}
+
+
+@app.post("/api/auth/change-password", response_model=Token)
+async def change_password(body: PasswordChange, current_user=Depends(get_current_user)):
+    require_household(current_user)
+    if not verify_password(body.current_password, current_user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Incorrect password")
+    access_token = apply_new_password(current_user, body.new_password)
+    return {"access_token": access_token, "token_type": "bearer", "user_type": "household"}
+
+
+@app.post("/api/lists/{list_id}/invites")
+async def create_invite(list_id: str, current_user=Depends(get_current_user)):
+    shopping_list = load_list_for_owner(list_id, current_user)
+    raw = new_secret_token()
+    invite_id = str(uuid.uuid4())
+    expires_at = datetime.utcnow() + timedelta(days=INVITE_DAYS)
+    invites_collection.insert_one(
+        {
+            "id": invite_id,
+            "list_id": shopping_list["id"],
+            "created_by": current_user["id"],
+            "token_hash": hash_token(raw),
+            "expires_at": expires_at,
+            "used_at": None,
+            "used_by": None,
+            "revoked_at": None,
+            "created_at": datetime.utcnow(),
+        }
+    )
+    return {
+        "id": invite_id,
+        "token": raw,
+        "path": f"/invite/{raw}",
+        "expires_at": expires_at,
+    }
+
+
+@app.get("/api/lists/{list_id}/invites")
+async def list_invites(list_id: str, current_user=Depends(get_current_user)):
+    load_list_for_owner(list_id, current_user)
+    rows = list(invites_collection.find({"list_id": list_id}).sort("created_at", -1))
+    return [
+        {
+            "id": row["id"],
+            "created_at": row["created_at"],
+            "expires_at": row["expires_at"],
+            "used": bool(row.get("used_at")),
+            "revoked": bool(row.get("revoked_at")),
+        }
+        for row in rows
+    ]
+
+
+@app.post("/api/lists/{list_id}/invites/{invite_id}/revoke")
+async def revoke_invite(list_id: str, invite_id: str, current_user=Depends(get_current_user)):
+    load_list_for_owner(list_id, current_user)
+    result = invites_collection.update_one(
+        {"id": invite_id, "list_id": list_id, "used_at": None, "revoked_at": None},
+        {"$set": {"revoked_at": datetime.utcnow()}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Invite not found")
+    return {"message": "Invite revoked"}
+
+
+def lookup_invite(raw_token: str):
+    return invites_collection.find_one({"token_hash": hash_token(raw_token)})
+
+
+@app.get("/api/invites/{token}")
+async def preview_invite(token: str):
+    invite = lookup_invite(token)
+    if not invite_is_open(invite):
+        return {"valid": False, "message": INVITE_UNUSABLE}
+    owner = users_collection.find_one({"id": invite["created_by"]})
+    name = first_name(owner.get("name") if owner else None)
+    return {"valid": True, "owner_first_name": name, "message": f"Join {name}'s list"}
+
+
+@app.post("/api/invites/{token}/accept")
+async def accept_invite(token: str, current_user=Depends(get_current_user)):
     if current_user.get("user_type") != "household":
-        raise HTTPException(status_code=403, detail="Household user required")
-    
-    shopping_list = lists_collection.find_one({"id": list_id})
-    
+        raise HTTPException(status_code=403, detail="Retailer accounts cannot join a household list.")
+    invite = invites_collection.find_one_and_update(
+        {
+            "token_hash": hash_token(token),
+            "used_at": None,
+            "revoked_at": None,
+            "expires_at": {"$gt": datetime.utcnow()},
+        },
+        {"$set": {"used_at": datetime.utcnow(), "used_by": current_user["id"]}},
+    )
+    if not invite:
+        raise HTTPException(status_code=400, detail=INVITE_UNUSABLE)
+    shopping_list = lists_collection.find_one({"id": invite["list_id"]})
     if not shopping_list:
-        raise HTTPException(status_code=404, detail="Shopping list not found")
-    
-    # Check if user owns this list
-    if shopping_list["created_by"] != current_user["id"]:
-        raise HTTPException(status_code=403, detail="Only list owner can delete")
-    
-    # Delete the list and all its items
+        raise HTTPException(status_code=400, detail=INVITE_UNUSABLE)
+    if current_user["id"] == shopping_list["created_by"]:
+        invites_collection.update_one({"id": invite["id"]}, {"$set": {"used_at": None, "used_by": None}})
+        raise HTTPException(status_code=400, detail="You already have this list.")
+    add_member(shopping_list, current_user["id"])
+    publish(
+        member_ids(shopping_list) + [current_user["id"]],
+        {"type": "lists.changed", "list_id": shopping_list["id"], "action": "shared"},
+    )
+    return {"list_id": shopping_list["id"], "name": shopping_list["name"]}
+
+
+@app.delete("/api/lists/{list_id}")
+async def delete_shopping_list(list_id: str, current_user=Depends(get_current_user)):
+    shopping_list = load_list_for_owner(list_id, current_user)
+    listeners = member_ids(shopping_list)
     lists_collection.delete_one({"id": list_id})
     items_collection.delete_many({"list_id": list_id})
-    
+    publish(listeners, {"type": "lists.changed", "list_id": list_id, "action": "deleted"})
     return {"message": "List deleted successfully"}
 
-# Item endpoints (unchanged)
-@app.post("/api/lists/{list_id}/items", response_model=Item)
-async def add_item(list_id: str, item_data: ItemCreate, current_user = Depends(get_current_user)):
-    if current_user.get("user_type") != "household":
-        raise HTTPException(status_code=403, detail="Household user required")
-    
-    shopping_list = lists_collection.find_one({"id": list_id})
-    
-    if not shopping_list:
-        raise HTTPException(status_code=404, detail="Shopping list not found")
-    
-    # Check if user has access to this list
-    if (shopping_list["created_by"] != current_user["id"] and 
-        current_user["id"] not in shopping_list["shared_with"]):
-        raise HTTPException(status_code=403, detail="Access denied")
-    
-    item_id = str(uuid.uuid4())
-    
-    item = {
-        "id": item_id,
+
+@app.get("/api/lists/{list_id}/basket-offer", response_model=BasketOfferPlaceholder)
+async def basket_offer(list_id: str, current_user=Depends(get_current_user)):
+    load_list_for_member(list_id, current_user)
+    return BasketOfferPlaceholder(list_id=list_id, offers=[], message=BASKET_PLACEHOLDER)
+
+
+def build_item(list_id: str, item_data: ItemCreate, user) -> dict:
+    if not item_data.name.strip():
+        raise HTTPException(status_code=400, detail="Item name is required.")
+    package_unit = None
+    if item_data.package_unit:
+        package_unit = require_unit(item_data.package_unit)
+    package_size = item_data.package_size
+    if package_size is not None and package_size <= 0:
+        raise HTTPException(status_code=400, detail="Package size must be greater than zero.")
+    if (package_size is None) != (package_unit is None):
+        raise HTTPException(
+            status_code=400,
+            detail="Package size and package unit must both be set, or both left empty.",
+        )
+    quantity_count = item_data.quantity_count
+    if quantity_count is not None and quantity_count <= 0:
+        raise HTTPException(status_code=400, detail="Quantity must be greater than zero.")
+    if item_data.quantity and item_data.quantity.strip():
+        quantity = item_data.quantity.strip()
+    elif quantity_count is not None:
+        quantity = str(quantity_count)
+    else:
+        quantity = "1"
+        quantity_count = 1
+    brand = " ".join(item_data.brand.strip().split()) if item_data.brand and item_data.brand.strip() else None
+    return {
+        "id": str(uuid.uuid4()),
         "list_id": list_id,
-        "name": item_data.name,
-        "quantity": item_data.quantity or "1",
+        "name": " ".join(item_data.name.strip().split()),
+        "name_key": name_key(item_data.name),
+        "quantity": quantity,
+        "quantity_count": quantity_count,
+        "brand": brand,
+        "package_size": package_size,
+        "package_unit": package_unit,
         "is_purchased": False,
-        "added_by": current_user["id"],
-        "created_at": datetime.utcnow()
+        "added_by": user["id"],
+        "created_at": datetime.utcnow(),
     }
-    
+
+
+@app.post("/api/lists/{list_id}/items", response_model=Item)
+async def add_item(list_id: str, item_data: ItemCreate, current_user=Depends(get_current_user)):
+    shopping_list = load_list_for_member(list_id, current_user)
+    item = build_item(list_id, item_data, current_user)
     items_collection.insert_one(item)
-    
-    return Item(**item)
+    publish(member_ids(shopping_list), {"type": "items.changed", "list_id": list_id, "action": "added", "item_id": item["id"]})
+    return present_item(item)
+
 
 @app.get("/api/lists/{list_id}/items", response_model=List[Item])
-async def get_list_items(list_id: str, current_user = Depends(get_current_user)):
-    if current_user.get("user_type") != "household":
-        raise HTTPException(status_code=403, detail="Household user required")
-    
-    shopping_list = lists_collection.find_one({"id": list_id})
-    
-    if not shopping_list:
-        raise HTTPException(status_code=404, detail="Shopping list not found")
-    
-    # Check if user has access to this list
-    if (shopping_list["created_by"] != current_user["id"] and 
-        current_user["id"] not in shopping_list["shared_with"]):
-        raise HTTPException(status_code=403, detail="Access denied")
-    
+async def get_list_items(list_id: str, current_user=Depends(get_current_user)):
+    load_list_for_member(list_id, current_user)
     items = list(items_collection.find({"list_id": list_id}).sort("created_at", 1))
-    
-    return [Item(**item) for item in items]
+    return [present_item(item) for item in items]
+
+
+@app.get("/api/lists/{list_id}/items/{item_id}/example-prices", response_model=List[ExamplePrice])
+async def item_example_prices(list_id: str, item_id: str, current_user=Depends(get_current_user)):
+    load_list_for_member(list_id, current_user)
+    item = items_collection.find_one({"id": item_id, "list_id": list_id})
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return example_prices_for_item(item, current_user)
+
 
 @app.put("/api/items/{item_id}", response_model=Item)
-async def update_item(item_id: str, item_update: ItemUpdate, current_user = Depends(get_current_user)):
-    if current_user.get("user_type") != "household":
-        raise HTTPException(status_code=403, detail="Household user required")
-    
+async def update_item(item_id: str, item_update: ItemUpdate, current_user=Depends(get_current_user)):
+    require_household(current_user)
     item = items_collection.find_one({"id": item_id})
-    
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
-    
-    # Check if user has access to the list containing this item
-    shopping_list = lists_collection.find_one({"id": item["list_id"]})
-    if (shopping_list["created_by"] != current_user["id"] and 
-        current_user["id"] not in shopping_list["shared_with"]):
-        raise HTTPException(status_code=403, detail="Access denied")
-    
-    # Update item
-    items_collection.update_one(
-        {"id": item_id},
-        {"$set": {"is_purchased": item_update.is_purchased}}
+    shopping_list = load_list_for_member(item["list_id"], current_user)
+    items_collection.update_one({"id": item_id}, {"$set": {"is_purchased": item_update.is_purchased}})
+    updated = items_collection.find_one({"id": item_id})
+    publish(
+        member_ids(shopping_list),
+        {"type": "items.changed", "list_id": item["list_id"], "action": "updated", "item_id": item_id},
     )
-    
-    updated_item = items_collection.find_one({"id": item_id})
-    return Item(**updated_item)
+    return present_item(updated)
+
 
 @app.delete("/api/items/{item_id}")
-async def delete_item(item_id: str, current_user = Depends(get_current_user)):
-    if current_user.get("user_type") != "household":
-        raise HTTPException(status_code=403, detail="Household user required")
-    
+async def delete_item(item_id: str, current_user=Depends(get_current_user)):
+    require_household(current_user)
     item = items_collection.find_one({"id": item_id})
-    
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
-    
-    # Check if user has access to the list containing this item
-    shopping_list = lists_collection.find_one({"id": item["list_id"]})
-    if (shopping_list["created_by"] != current_user["id"] and 
-        current_user["id"] not in shopping_list["shared_with"]):
-        raise HTTPException(status_code=403, detail="Access denied")
-    
+    shopping_list = load_list_for_member(item["list_id"], current_user)
     items_collection.delete_one({"id": item_id})
-    
+    publish(
+        member_ids(shopping_list),
+        {"type": "items.changed", "list_id": item["list_id"], "action": "deleted", "item_id": item_id},
+    )
     return {"message": "Item deleted successfully"}
 
-@app.get("/api/health")
-async def health_check():
-    return {"status": "healthy"}
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8001)

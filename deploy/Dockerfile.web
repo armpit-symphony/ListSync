@@ -1,0 +1,25 @@
+FROM node:22-bookworm-slim AS build
+
+WORKDIR /app
+
+COPY frontend/package.json frontend/yarn.lock ./
+RUN yarn install --frozen-lockfile
+
+COPY frontend/ ./
+# The committed frontend/.env points at a local API. Production must not bake that in.
+RUN rm -f .env .env.local .env.production .env.development
+
+ARG REACT_APP_BACKEND_URL=
+ENV REACT_APP_BACKEND_URL=${REACT_APP_BACKEND_URL}
+ENV CI=true
+ENV NODE_OPTIONS=--max-old-space-size=2048
+
+RUN yarn build \
+    && node -e "const fs=require('fs'); const files=fs.readdirSync('build/static/js').filter(f=>f.endsWith('.js')); const blob=files.map(f=>fs.readFileSync('build/static/js/'+f,'utf8')).join('\n'); if (blob.includes('127.0.0.1:8001') || blob.includes('localhost:8001')) { console.error('production bundle still points at a local API'); process.exit(1); }"
+
+FROM nginx:1.27-alpine
+
+COPY deploy/nginx/container.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/build /usr/share/nginx/html
+
+EXPOSE 8080

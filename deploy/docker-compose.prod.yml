@@ -1,0 +1,71 @@
+# Private ListSync on one machine. MongoDB is not published.
+# The only host port is 127.0.0.1:8510, which the machine's nginx proxies.
+# Live updates require exactly one uvicorn worker.
+
+name: listsync
+
+services:
+  mongo:
+    image: mongo:7.0
+    restart: unless-stopped
+    mem_limit: 512m
+    volumes:
+      - listsync_mongo:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    restart: unless-stopped
+    mem_limit: 384m
+    env_file:
+      - .env
+    environment:
+      MONGO_URL: mongodb://mongo:27017
+      DB_NAME: ${DB_NAME:-shopping_app}
+    depends_on:
+      mongo:
+        condition: service_healthy
+    expose:
+      - "8001"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/api/health', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+      args:
+        REACT_APP_BACKEND_URL: ${REACT_APP_BACKEND_URL:-}
+    restart: unless-stopped
+    mem_limit: 64m
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8510:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8080/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+volumes:
+  listsync_mongo:
